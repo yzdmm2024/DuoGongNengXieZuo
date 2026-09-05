@@ -301,11 +301,11 @@ static void showQuickPhrases() {
         stack.axis = UILayoutConstraintAxisHorizontal;
         stack.distribution = UIStackViewDistributionEqualSpacing;
         stack.alignment = UIStackViewAlignmentCenter;
-        stack.spacing = 5;
+        stack.spacing = 4;
         stack.translatesAutoresizingMaskIntoConstraints = NO;
 
         [self addSubview:stack];
-        [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
+        [stack.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:4].active = YES;
         [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-35].active = YES;
 
         UIButton *b;
