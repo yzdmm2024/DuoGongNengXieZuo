@@ -14,7 +14,6 @@
 #pragma mark - 全局状态
 
 static NSMutableArray *clipboardHistory = nil;
-static NSArray *quickPhrases = nil;
 static const NSUInteger kMaxClipboardItems = 20;
 
 #pragma mark - 懒加载初始化
@@ -41,27 +40,16 @@ static void initClipboardOnce() {
     });
 }
 
-static void initPhrasesOnce() {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        quickPhrases = @[
-            @"好的", @"收到", @"谢谢", @"不客气",
-            @"好的，马上处理", @"收到，稍后回复",
-            @"请稍等", @"没问题", @"了解",
-            @"OK", @"Got it", @"Thanks", @"Sure",
-            @"等一下", @"马上到", @"辛苦了"
-        ];
-    });
-}
-
 #pragma mark - 工具函数
 
 static UIButton* createButton(NSString *sfSymbol, SEL action, id target) {
     @try {
-        UIImage *img = [UIImage systemImageNamed:sfSymbol];
+        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightRegular];
+        UIImage *img = [UIImage systemImageNamed:sfSymbol withConfiguration:config];
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
         if (img) [btn setImage:img forState:UIControlStateNormal];
         [btn setTintColor:[UIColor labelColor]];
+        btn.contentEdgeInsets = UIEdgeInsetsMake(6, 8, 6, 8);
         [btn addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
         return btn;
     } @catch(NSException *e) {
@@ -70,7 +58,7 @@ static UIButton* createButton(NSString *sfSymbol, SEL action, id target) {
 }
 
 static UIView* separator() {
-    UILabel *sep = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 1, 24)];
+    UILabel *sep = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 1, 32)];
     sep.backgroundColor = [UIColor systemGray4Color];
     return sep;
 }
@@ -162,34 +150,6 @@ static void showClipboardHistory() {
     [vc presentViewController:alert animated:YES completion:nil];
 }
 
-#pragma mark - 快捷短语弹窗
-
-static void showQuickPhrases() {
-    initPhrasesOnce();
-    UIViewController *vc = topViewController();
-    if (!vc) return;
-
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:@"快捷短语"
-                         message:nil
-                  preferredStyle:UIAlertControllerStyleActionSheet];
-
-    for (NSString *phrase in quickPhrases) {
-        [alert addAction:[UIAlertAction actionWithTitle:phrase style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            @try {
-                // 通过 UITextInput 协议插入文本
-                UIResponder *fr = findFirstResponder();
-                if ([fr conformsToProtocol:@protocol(UITextInput)]) {
-                    [(id<UITextInput>)fr insertText:phrase];
-                }
-            } @catch(NSException *e) {}
-        }]];
-    }
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [vc presentViewController:alert animated:YES completion:nil];
-}
-
 #pragma mark - Hook
 
 %hook UIKeyboardDockView
@@ -205,12 +165,12 @@ static void showQuickPhrases() {
         stack.axis = UILayoutConstraintAxisHorizontal;
         stack.distribution = UIStackViewDistributionEqualSpacing;
         stack.alignment = UIStackViewAlignmentCenter;
-        stack.spacing = 6;
+        stack.spacing = 12;
         stack.translatesAutoresizingMaskIntoConstraints = NO;
 
         [self addSubview:stack];
         [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
-        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-6].active = YES;
+        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-10].active = YES;
 
         UIButton *b;
         b = createButton(@"arrow.uturn.backward", @selector(didTapUndo), self);
@@ -230,8 +190,6 @@ static void showQuickPhrases() {
         [stack addArrangedSubview:separator()];
 
         b = createButton(@"list.clipboard", @selector(didTapClipboardHistory), self);
-        if (b) [stack addArrangedSubview:b];
-        b = createButton(@"text.quote",     @selector(didTapQuickPhrases), self);
         if (b) [stack addArrangedSubview:b];
 
         [stack addArrangedSubview:separator()];
@@ -255,13 +213,13 @@ static void didTapUndo(id self, SEL _cmd) {
 
 static void didTapSelectAll(id self, SEL _cmd) {
     @try {
-        [[UIApplication sharedApplication] sendAction:@selector(selectAll:) to:nil from:self forEvent:nil];
+        [[UIApplication sharedApplication] sendAction:@selector(selectAll:) to:nil from:nil forEvent:nil];
     } @catch(NSException *e) {}
 }
 
 static void didTapPaste(id self, SEL _cmd) {
     @try {
-        [[UIApplication sharedApplication] sendAction:@selector(paste:) to:nil from:self forEvent:nil];
+        [[UIApplication sharedApplication] sendAction:@selector(paste:) to:nil from:nil forEvent:nil];
     } @catch(NSException *e) {}
 }
 
@@ -296,10 +254,6 @@ static void didTapClipboardHistory(id self, SEL _cmd) {
     showClipboardHistory();
 }
 
-static void didTapQuickPhrases(id self, SEL _cmd) {
-    showQuickPhrases();
-}
-
 // 收起键盘：使用 UIKeyboardImpl 的 hideKeyboard 方法
 static void didTapDismiss(id self, SEL _cmd) {
     @try {
@@ -319,7 +273,6 @@ static void didTapDismiss(id self, SEL _cmd) {
             {"didTapMoveLeft",         (IMP)didTapMoveLeft},
             {"didTapMoveRight",        (IMP)didTapMoveRight},
             {"didTapClipboardHistory", (IMP)didTapClipboardHistory},
-            {"didTapQuickPhrases",     (IMP)didTapQuickPhrases},
             {"didTapDismiss",          (IMP)didTapDismiss},
         };
 
