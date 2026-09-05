@@ -1,0 +1,27 @@
+name: Build 多功能写作
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Build
+        run: |
+          chmod +x build_tweak.sh
+          ./build_tweak.sh
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: 多功能写作
+          path: build/多功能写作.dylib
+          if-no-files-found: error

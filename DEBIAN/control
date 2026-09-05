@@ -1,0 +1,9 @@
+Package: com.example.duogongnengxiezuo
+Name: 多功能写作
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Depends: firmware (>= 16.0), mobilesubstrate (>= 0.9.7000)
+Description: 自用插件
+Maintainer: self
+Author: self
+Section: Tweaks
