@@ -309,13 +309,11 @@ static void showQuickPhrases() {
         [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-35].active = YES;
 
         UIButton *b;
-        b = createButton(@"arrow.uturn.backward",   @selector(didTapUndo),  self);
+        b = createButton(@"selection.pin.in.out",   @selector(didTapSelectAll), self);
         if (b) [stack addArrangedSubview:b];
         b = createButton(@"scissors",               @selector(didTapCut),  self);
         if (b) [stack addArrangedSubview:b];
         b = createButton(@"doc.on.clipboard",       @selector(didTapPaste), self);
-        if (b) [stack addArrangedSubview:b];
-        b = createButton(@"selection.pin.in.out",   @selector(didTapSelectAll), self);
         if (b) [stack addArrangedSubview:b];
 
         [stack addArrangedSubview:separator()];
@@ -343,12 +341,6 @@ static void showQuickPhrases() {
 %end
 
 #pragma mark - 按钮 Action
-
-static void didTapUndo(id self, SEL _cmd) {
-    @try {
-        [[UIApplication sharedApplication] sendAction:@selector(undo:) to:nil from:self forEvent:nil];
-    } @catch(NSException *e) {}
-}
 
 static void didTapCut(id self, SEL _cmd) {
     @try {
@@ -414,7 +406,6 @@ static void didTapDismiss(id self, SEL _cmd) {
         if (!cls) return;
 
         struct { const char *name; IMP imp; } methods[] = {
-            {"didTapUndo",             (IMP)didTapUndo},
             {"didTapCut",              (IMP)didTapCut},
             {"didTapSelectAll",        (IMP)didTapSelectAll},
             {"didTapPaste",            (IMP)didTapPaste},
