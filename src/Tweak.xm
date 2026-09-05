@@ -44,12 +44,12 @@ static void initClipboardOnce() {
 
 static UIButton* createButton(NSString *sfSymbol, SEL action, id target) {
     @try {
-        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightRegular];
+        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightRegular];
         UIImage *img = [UIImage systemImageNamed:sfSymbol withConfiguration:config];
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
         if (img) [btn setImage:img forState:UIControlStateNormal];
         [btn setTintColor:[UIColor labelColor]];
-        btn.contentEdgeInsets = UIEdgeInsetsMake(6, 8, 6, 8);
+        btn.contentEdgeInsets = UIEdgeInsetsMake(3, 4, 3, 4);
         [btn addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
         return btn;
     } @catch(NSException *e) {
@@ -58,7 +58,7 @@ static UIButton* createButton(NSString *sfSymbol, SEL action, id target) {
 }
 
 static UIView* separator() {
-    UILabel *sep = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 1, 32)];
+    UILabel *sep = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 1, 20)];
     sep.backgroundColor = [UIColor systemGray4Color];
     return sep;
 }
@@ -165,12 +165,12 @@ static void showClipboardHistory() {
         stack.axis = UILayoutConstraintAxisHorizontal;
         stack.distribution = UIStackViewDistributionEqualSpacing;
         stack.alignment = UIStackViewAlignmentCenter;
-        stack.spacing = 12;
+        stack.spacing = 5;
         stack.translatesAutoresizingMaskIntoConstraints = NO;
 
         [self addSubview:stack];
         [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
-        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-10].active = YES;
+        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-2].active = YES;
 
         UIButton *b;
         b = createButton(@"arrow.uturn.backward", @selector(didTapUndo), self);
