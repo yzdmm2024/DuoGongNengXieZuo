@@ -8,13 +8,7 @@
 
 @interface UIKeyboardImpl : UIResponder
 + (id)sharedInstance;
-- (void)dismissKeyboard;
-- (void)undo:(id)sender;
-- (void)paste:(id)sender;
-- (void)selectAll:(id)sender;
-- (void)moveBackward:(id)sender;
-- (void)moveForward:(id)sender;
-- (void)insertText:(NSString *)text;
+- (void)hideKeyboard;
 @end
 
 #pragma mark - 全局状态
@@ -22,7 +16,6 @@
 static NSMutableArray *clipboardHistory = nil;
 static NSArray *quickPhrases = nil;
 static const NSUInteger kMaxClipboardItems = 20;
-// isLayoutBusy 已移除，改用 dispatch_once 避免重复创建
 
 #pragma mark - 懒加载初始化
 
@@ -82,6 +75,26 @@ static UIView* separator() {
     return sep;
 }
 
+// 通过 KVC 获取 UIWindow 的私有 firstResponder 属性
+static UIResponder* findFirstResponder() {
+    @try {
+        UIWindow *keyWindow = nil;
+        if (@available(iOS 13.0, *)) {
+            NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
+            for (UIScene *scene in scenes) {
+                if (scene.activationState == UISceneActivationStateForegroundActive) {
+                    keyWindow = ((UIWindowScene *)scene).keyWindow;
+                    break;
+                }
+            }
+        }
+        if (!keyWindow) keyWindow = [UIApplication sharedApplication].keyWindow;
+        return [keyWindow valueForKey:@"firstResponder"];
+    } @catch(NSException *e) {
+        return nil;
+    }
+}
+
 static UIViewController* topViewController() {
     @try {
         UIWindow *keyWindow = nil;
@@ -93,10 +106,8 @@ static UIViewController* topViewController() {
                     break;
                 }
             }
-            if (!keyWindow && [scenes anyObject]) {
-                keyWindow = ((UIWindowScene *)[scenes anyObject]).keyWindow;
-            }
         }
+        if (!keyWindow) keyWindow = [UIApplication sharedApplication].keyWindow;
         if (!keyWindow) return nil;
         UIViewController *root = keyWindow.rootViewController;
         while (root.presentedViewController) {
@@ -134,8 +145,12 @@ static void showClipboardHistory() {
         NSString *display = item.length > 40 ? [[item substringToIndex:40] stringByAppendingString:@"…"] : item;
         [alert addAction:[UIAlertAction actionWithTitle:display style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
             @try {
-                [UIPasteboard generalPasteboard].string = item;
-                [[UIKeyboardImpl sharedInstance] paste:nil];
+                // 通过 UITextInput 协议插入文本
+                UIResponder *fr = findFirstResponder();
+                if ([fr conformsToProtocol:@protocol(UITextInput)]) {
+                    [UIPasteboard generalPasteboard].string = item;
+                    [(id<UITextInput>)fr insertText:item];
+                }
             } @catch(NSException *e) {}
         }]];
     }
@@ -162,7 +177,11 @@ static void showQuickPhrases() {
     for (NSString *phrase in quickPhrases) {
         [alert addAction:[UIAlertAction actionWithTitle:phrase style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
             @try {
-                [[UIKeyboardImpl sharedInstance] insertText:phrase];
+                // 通过 UITextInput 协议插入文本
+                UIResponder *fr = findFirstResponder();
+                if ([fr conformsToProtocol:@protocol(UITextInput)]) {
+                    [(id<UITextInput>)fr insertText:phrase];
+                }
             } @catch(NSException *e) {}
         }]];
     }
@@ -178,7 +197,6 @@ static void showQuickPhrases() {
 - (void)layoutSubviews {
     %orig;
 
-    // 工具栏不存在时才创建，避免每次 layoutSubviews 重建导致 watchdog 超时
     if ([self viewWithTag:999]) return;
 
     @try {
@@ -226,26 +244,52 @@ static void showQuickPhrases() {
 
 %end
 
-#pragma mark - 按钮 Action（用 %ctor 手动注册，防止 Logos 不自动添加新方法）
+#pragma mark - 按钮 Action
 
+// 标准编辑操作：通过 UIApplication 沿着响应者链发送到 firstResponder
 static void didTapUndo(id self, SEL _cmd) {
-    @try { [[UIKeyboardImpl sharedInstance] undo:nil]; } @catch(NSException *e) {}
+    @try {
+        [[UIApplication sharedApplication] sendAction:@selector(undo:) to:nil from:self forEvent:nil];
+    } @catch(NSException *e) {}
 }
 
 static void didTapSelectAll(id self, SEL _cmd) {
-    @try { [[UIKeyboardImpl sharedInstance] selectAll:nil]; } @catch(NSException *e) {}
+    @try {
+        [[UIApplication sharedApplication] sendAction:@selector(selectAll:) to:nil from:self forEvent:nil];
+    } @catch(NSException *e) {}
 }
 
 static void didTapPaste(id self, SEL _cmd) {
-    @try { [[UIKeyboardImpl sharedInstance] paste:nil]; } @catch(NSException *e) {}
+    @try {
+        [[UIApplication sharedApplication] sendAction:@selector(paste:) to:nil from:self forEvent:nil];
+    } @catch(NSException *e) {}
 }
 
+// 光标移动：通过 UITextInput 协议操作
 static void didTapMoveLeft(id self, SEL _cmd) {
-    @try { [[UIKeyboardImpl sharedInstance] moveBackward:nil]; } @catch(NSException *e) {}
+    @try {
+        UIResponder *fr = findFirstResponder();
+        if (!fr || ![fr conformsToProtocol:@protocol(UITextInput)]) return;
+        id<UITextInput> input = (id<UITextInput>)fr;
+        UITextRange *selectedRange = [input selectedTextRange];
+        if (!selectedRange) return;
+        UITextPosition *newPos = [input positionFromPosition:selectedRange.start offset:-1];
+        if (!newPos) return;
+        [input setSelectedTextRange:[input textRangeFromPosition:newPos toPosition:newPos]];
+    } @catch(NSException *e) {}
 }
 
 static void didTapMoveRight(id self, SEL _cmd) {
-    @try { [[UIKeyboardImpl sharedInstance] moveForward:nil]; } @catch(NSException *e) {}
+    @try {
+        UIResponder *fr = findFirstResponder();
+        if (!fr || ![fr conformsToProtocol:@protocol(UITextInput)]) return;
+        id<UITextInput> input = (id<UITextInput>)fr;
+        UITextRange *selectedRange = [input selectedTextRange];
+        if (!selectedRange) return;
+        UITextPosition *newPos = [input positionFromPosition:selectedRange.end offset:1];
+        if (!newPos) return;
+        [input setSelectedTextRange:[input textRangeFromPosition:newPos toPosition:newPos]];
+    } @catch(NSException *e) {}
 }
 
 static void didTapClipboardHistory(id self, SEL _cmd) {
@@ -256,8 +300,11 @@ static void didTapQuickPhrases(id self, SEL _cmd) {
     showQuickPhrases();
 }
 
+// 收起键盘：使用 UIKeyboardImpl 的 hideKeyboard 方法
 static void didTapDismiss(id self, SEL _cmd) {
-    @try { [[UIKeyboardImpl sharedInstance] dismissKeyboard]; } @catch(NSException *e) {}
+    @try {
+        [[UIKeyboardImpl sharedInstance] hideKeyboard];
+    } @catch(NSException *e) {}
 }
 
 %ctor {
@@ -279,7 +326,6 @@ static void didTapDismiss(id self, SEL _cmd) {
         for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
             SEL sel = sel_registerName(methods[i].name);
             if (!class_addMethod(cls, sel, methods[i].imp, "v@:")) {
-                // 如果添加失败（可能已存在），尝试替换
                 class_replaceMethod(cls, sel, methods[i].imp, "v@:");
             }
         }
