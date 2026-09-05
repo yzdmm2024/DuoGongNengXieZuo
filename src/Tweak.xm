@@ -178,51 +178,50 @@ static void showQuickPhrases() {
 - (void)layoutSubviews {
     %orig;
 
-    // 只创建一次工具栏，避免每次 layoutSubviews 都重建导致 watchdog 超时
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        @try {
-            UIStackView *stack = [[UIStackView alloc] init];
-            stack.tag = 999;
-            stack.axis = UILayoutConstraintAxisHorizontal;
-            stack.distribution = UIStackViewDistributionEqualSpacing;
-            stack.alignment = UIStackViewAlignmentCenter;
-            stack.spacing = 6;
-            stack.translatesAutoresizingMaskIntoConstraints = NO;
+    // 工具栏不存在时才创建，避免每次 layoutSubviews 重建导致 watchdog 超时
+    if ([self viewWithTag:999]) return;
 
-            [self addSubview:stack];
-            [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
-            [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-6].active = YES;
+    @try {
+        UIStackView *stack = [[UIStackView alloc] init];
+        stack.tag = 999;
+        stack.axis = UILayoutConstraintAxisHorizontal;
+        stack.distribution = UIStackViewDistributionEqualSpacing;
+        stack.alignment = UIStackViewAlignmentCenter;
+        stack.spacing = 6;
+        stack.translatesAutoresizingMaskIntoConstraints = NO;
 
-            UIButton *b;
-            b = createButton(@"arrow.uturn.backward", @selector(didTapUndo), self);
-            if (b) [stack addArrangedSubview:b];
-            b = createButton(@"selection.pin.in.out",  @selector(didTapSelectAll), self);
-            if (b) [stack addArrangedSubview:b];
-            b = createButton(@"doc.on.clipboard",      @selector(didTapPaste), self);
-            if (b) [stack addArrangedSubview:b];
+        [self addSubview:stack];
+        [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
+        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-6].active = YES;
 
-            [stack addArrangedSubview:separator()];
+        UIButton *b;
+        b = createButton(@"arrow.uturn.backward", @selector(didTapUndo), self);
+        if (b) [stack addArrangedSubview:b];
+        b = createButton(@"selection.pin.in.out",  @selector(didTapSelectAll), self);
+        if (b) [stack addArrangedSubview:b];
+        b = createButton(@"doc.on.clipboard",      @selector(didTapPaste), self);
+        if (b) [stack addArrangedSubview:b];
 
-            b = createButton(@"arrow.left",  @selector(didTapMoveLeft), self);
-            if (b) [stack addArrangedSubview:b];
-            b = createButton(@"arrow.right", @selector(didTapMoveRight), self);
-            if (b) [stack addArrangedSubview:b];
+        [stack addArrangedSubview:separator()];
 
-            [stack addArrangedSubview:separator()];
+        b = createButton(@"arrow.left",  @selector(didTapMoveLeft), self);
+        if (b) [stack addArrangedSubview:b];
+        b = createButton(@"arrow.right", @selector(didTapMoveRight), self);
+        if (b) [stack addArrangedSubview:b];
 
-            b = createButton(@"list.clipboard", @selector(didTapClipboardHistory), self);
-            if (b) [stack addArrangedSubview:b];
-            b = createButton(@"text.quote",     @selector(didTapQuickPhrases), self);
-            if (b) [stack addArrangedSubview:b];
+        [stack addArrangedSubview:separator()];
 
-            [stack addArrangedSubview:separator()];
+        b = createButton(@"list.clipboard", @selector(didTapClipboardHistory), self);
+        if (b) [stack addArrangedSubview:b];
+        b = createButton(@"text.quote",     @selector(didTapQuickPhrases), self);
+        if (b) [stack addArrangedSubview:b];
 
-            b = createButton(@"keyboard.chevron.compact.down", @selector(didTapDismiss), self);
-            if (b) [stack addArrangedSubview:b];
-        } @catch(NSException *e) {
-        }
-    });
+        [stack addArrangedSubview:separator()];
+
+        b = createButton(@"keyboard.chevron.compact.down", @selector(didTapDismiss), self);
+        if (b) [stack addArrangedSubview:b];
+    } @catch(NSException *e) {
+    }
 }
 
 - (void)didTapUndo {
