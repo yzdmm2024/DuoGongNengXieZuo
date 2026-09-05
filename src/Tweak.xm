@@ -170,7 +170,7 @@ static void showClipboardHistory() {
 
         [self addSubview:stack];
         [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
-        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-2].active = YES;
+        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-35].active = YES;
 
         UIButton *b;
         b = createButton(@"arrow.uturn.backward", @selector(didTapUndo), self);
