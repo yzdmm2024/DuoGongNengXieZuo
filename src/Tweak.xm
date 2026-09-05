@@ -40,6 +40,127 @@ static void initClipboardOnce() {
     });
 }
 
+#pragma mark - 快捷短语持久化
+
+static NSString *const kQPSKey = @"MultiWriter_QuickPhrases";
+
+static NSMutableArray *loadQuickPhrases() {
+    NSArray *saved = [[NSUserDefaults standardUserDefaults] arrayForKey:kQPSKey];
+    if (saved.count > 0) return [saved mutableCopy];
+    return [@[@"好的", @"收到", @"谢谢", @"不客气", @"好的，马上处理", @"收到，稍后回复", @"请稍等", @"没问题", @"了解", @"OK", @"Got it", @"辛苦了"] mutableCopy];
+}
+
+static void saveQuickPhrases(NSArray *phrases) {
+    [[NSUserDefaults standardUserDefaults] setObject:phrases forKey:kQPSKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+#pragma mark - 快捷短语编辑器
+
+@interface QPEditorViewController : UITableViewController <UIAdaptivePresentationControllerDelegate>
+@property (nonatomic, strong) NSMutableArray *phrases;
+@end
+
+@implementation QPEditorViewController
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStylePlain];
+    if (self) {
+        _phrases = loadQuickPhrases();
+        self.title = @"快捷短语";
+        self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addPhrase)];
+        self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"完成" style:UIBarButtonItemStyleDone target:self action:@selector(done)];
+    }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.tableView.estimatedRowHeight = 44;
+    self.tableView.tableFooterView = [[UIView alloc] init];
+    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"cell"];
+}
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
+    return self.phrases.count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"cell" forIndexPath:ip];
+    cell.textLabel.text = self.phrases[ip.row];
+    cell.textLabel.font = [UIFont systemFontOfSize:16];
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    @try {
+        NSString *text = self.phrases[ip.row];
+        UIResponder *fr = [self findFirstResponder];
+        if ([fr conformsToProtocol:@protocol(UITextInput)]) {
+            [(id<UITextInput>)fr insertText:text];
+        }
+    } @catch(NSException *e) {}
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+// 左滑删除
+- (void)tableView:(UITableView *)tv commitEditingStyle:(UITableViewCellEditingStyle)style forRowAtIndexPath:(NSIndexPath *)ip {
+    if (style == UITableViewCellEditingStyleDelete) {
+        [self.phrases removeObjectAtIndex:ip.row];
+        saveQuickPhrases(self.phrases);
+        [tv deleteRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationAutomatic];
+    }
+}
+
+- (UITableViewCellEditingStyle)tableView:(UITableView *)tv editingStyleForRowAtIndexPath:(NSIndexPath *)ip {
+    return UITableViewCellEditingStyleDelete;
+}
+
+- (NSString *)tableView:(UITableView *)tv titleForDeleteConfirmationButtonForRowAtIndexPath:(NSIndexPath *)ip {
+    return @"删除";
+}
+
+- (void)addPhrase {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"添加短语" message:nil preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"输入短语内容";
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"添加" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *text = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (text.length > 0) {
+            [self.phrases addObject:text];
+            saveQuickPhrases(self.phrases);
+            NSIndexPath *ip = [NSIndexPath indexPathForRow:self.phrases.count - 1 inSection:0];
+            [self.tableView insertRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationAutomatic];
+        }
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)done {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (UIResponder *)findFirstResponder {
+    UIWindow *keyWindow = nil;
+    if (@available(iOS 13.0, *)) {
+        NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
+        for (UIScene *scene in scenes) {
+            if (scene.activationState == UISceneActivationStateForegroundActive) {
+                keyWindow = ((UIWindowScene *)scene).keyWindow;
+                break;
+            }
+        }
+    }
+    if (!keyWindow) keyWindow = [[UIApplication sharedApplication] keyWindow];
+    return [keyWindow valueForKey:@"firstResponder"];
+}
+
+@end
+
 #pragma mark - 工具函数
 
 static UIButton* createButton(NSString *sfSymbol, SEL action, id target) {
@@ -133,7 +254,6 @@ static void showClipboardHistory() {
         NSString *display = item.length > 40 ? [[item substringToIndex:40] stringByAppendingString:@"…"] : item;
         [alert addAction:[UIAlertAction actionWithTitle:display style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
             @try {
-                // 通过 UITextInput 协议插入文本
                 UIResponder *fr = findFirstResponder();
                 if ([fr conformsToProtocol:@protocol(UITextInput)]) {
                     [UIPasteboard generalPasteboard].string = item;
@@ -148,6 +268,22 @@ static void showClipboardHistory() {
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     [vc presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - 快捷短语弹窗
+
+static void showQuickPhrases() {
+    UIViewController *vc = topViewController();
+    if (!vc) return;
+
+    QPEditorViewController *editor = [[QPEditorViewController alloc] init];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:editor];
+    if (@available(iOS 13.0, *)) {
+        nav.modalPresentationStyle = UIModalPresentationAutomatic;
+    } else {
+        nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    }
+    [vc presentViewController:nav animated:YES completion:nil];
 }
 
 #pragma mark - Hook
@@ -173,11 +309,13 @@ static void showClipboardHistory() {
         [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-35].active = YES;
 
         UIButton *b;
-        b = createButton(@"arrow.uturn.backward", @selector(didTapUndo), self);
+        b = createButton(@"arrow.uturn.backward",   @selector(didTapUndo),  self);
         if (b) [stack addArrangedSubview:b];
-        b = createButton(@"selection.pin.in.out",  @selector(didTapSelectAll), self);
+        b = createButton(@"scissors",               @selector(didTapCut),  self);
         if (b) [stack addArrangedSubview:b];
-        b = createButton(@"doc.on.clipboard",      @selector(didTapPaste), self);
+        b = createButton(@"doc.on.clipboard",       @selector(didTapPaste), self);
+        if (b) [stack addArrangedSubview:b];
+        b = createButton(@"selection.pin.in.out",   @selector(didTapSelectAll), self);
         if (b) [stack addArrangedSubview:b];
 
         [stack addArrangedSubview:separator()];
@@ -189,7 +327,9 @@ static void showClipboardHistory() {
 
         [stack addArrangedSubview:separator()];
 
-        b = createButton(@"list.clipboard", @selector(didTapClipboardHistory), self);
+        b = createButton(@"list.clipboard",  @selector(didTapClipboardHistory), self);
+        if (b) [stack addArrangedSubview:b];
+        b = createButton(@"text.quote",      @selector(didTapQuickPhrases), self);
         if (b) [stack addArrangedSubview:b];
 
         [stack addArrangedSubview:separator()];
@@ -204,10 +344,15 @@ static void showClipboardHistory() {
 
 #pragma mark - 按钮 Action
 
-// 标准编辑操作：通过 UIApplication 沿着响应者链发送到 firstResponder
 static void didTapUndo(id self, SEL _cmd) {
     @try {
         [[UIApplication sharedApplication] sendAction:@selector(undo:) to:nil from:self forEvent:nil];
+    } @catch(NSException *e) {}
+}
+
+static void didTapCut(id self, SEL _cmd) {
+    @try {
+        [[UIApplication sharedApplication] sendAction:@selector(cut:) to:nil from:nil forEvent:nil];
     } @catch(NSException *e) {}
 }
 
@@ -223,7 +368,6 @@ static void didTapPaste(id self, SEL _cmd) {
     } @catch(NSException *e) {}
 }
 
-// 光标移动：通过 UITextInput 协议操作
 static void didTapMoveLeft(id self, SEL _cmd) {
     @try {
         UIResponder *fr = findFirstResponder();
@@ -254,7 +398,10 @@ static void didTapClipboardHistory(id self, SEL _cmd) {
     showClipboardHistory();
 }
 
-// 收起键盘：使用 UIKeyboardImpl 的 hideKeyboard 方法
+static void didTapQuickPhrases(id self, SEL _cmd) {
+    showQuickPhrases();
+}
+
 static void didTapDismiss(id self, SEL _cmd) {
     @try {
         [[UIKeyboardImpl sharedInstance] hideKeyboard];
@@ -268,11 +415,13 @@ static void didTapDismiss(id self, SEL _cmd) {
 
         struct { const char *name; IMP imp; } methods[] = {
             {"didTapUndo",             (IMP)didTapUndo},
+            {"didTapCut",              (IMP)didTapCut},
             {"didTapSelectAll",        (IMP)didTapSelectAll},
             {"didTapPaste",            (IMP)didTapPaste},
             {"didTapMoveLeft",         (IMP)didTapMoveLeft},
             {"didTapMoveRight",        (IMP)didTapMoveRight},
             {"didTapClipboardHistory", (IMP)didTapClipboardHistory},
+            {"didTapQuickPhrases",     (IMP)didTapQuickPhrases},
             {"didTapDismiss",          (IMP)didTapDismiss},
         };
 
