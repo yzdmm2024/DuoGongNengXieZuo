@@ -305,7 +305,7 @@ static void showQuickPhrases() {
         stack.translatesAutoresizingMaskIntoConstraints = NO;
 
         [self addSubview:stack];
-        [stack.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:4].active = YES;
+        [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
         [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-35].active = YES;
 
         UIButton *b;
