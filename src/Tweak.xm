@@ -224,36 +224,64 @@ static void showQuickPhrases() {
     }
 }
 
-- (void)didTapUndo {
+%end
+
+#pragma mark - 按钮 Action（用 %ctor 手动注册，防止 Logos 不自动添加新方法）
+
+static void didTapUndo(id self, SEL _cmd) {
     @try { [[UIKeyboardImpl sharedInstance] undo:nil]; } @catch(NSException *e) {}
 }
 
-- (void)didTapSelectAll {
+static void didTapSelectAll(id self, SEL _cmd) {
     @try { [[UIKeyboardImpl sharedInstance] selectAll:nil]; } @catch(NSException *e) {}
 }
 
-- (void)didTapPaste {
+static void didTapPaste(id self, SEL _cmd) {
     @try { [[UIKeyboardImpl sharedInstance] paste:nil]; } @catch(NSException *e) {}
 }
 
-- (void)didTapMoveLeft {
+static void didTapMoveLeft(id self, SEL _cmd) {
     @try { [[UIKeyboardImpl sharedInstance] moveBackward:nil]; } @catch(NSException *e) {}
 }
 
-- (void)didTapMoveRight {
+static void didTapMoveRight(id self, SEL _cmd) {
     @try { [[UIKeyboardImpl sharedInstance] moveForward:nil]; } @catch(NSException *e) {}
 }
 
-- (void)didTapClipboardHistory {
+static void didTapClipboardHistory(id self, SEL _cmd) {
     showClipboardHistory();
 }
 
-- (void)didTapQuickPhrases {
+static void didTapQuickPhrases(id self, SEL _cmd) {
     showQuickPhrases();
 }
 
-- (void)didTapDismiss {
+static void didTapDismiss(id self, SEL _cmd) {
     @try { [[UIKeyboardImpl sharedInstance] dismissKeyboard]; } @catch(NSException *e) {}
 }
 
-%end
+%ctor {
+    @autoreleasepool {
+        Class cls = NSClassFromString(@"UIKeyboardDockView");
+        if (!cls) return;
+
+        struct { const char *name; IMP imp; } methods[] = {
+            {"didTapUndo",             (IMP)didTapUndo},
+            {"didTapSelectAll",        (IMP)didTapSelectAll},
+            {"didTapPaste",            (IMP)didTapPaste},
+            {"didTapMoveLeft",         (IMP)didTapMoveLeft},
+            {"didTapMoveRight",        (IMP)didTapMoveRight},
+            {"didTapClipboardHistory", (IMP)didTapClipboardHistory},
+            {"didTapQuickPhrases",     (IMP)didTapQuickPhrases},
+            {"didTapDismiss",          (IMP)didTapDismiss},
+        };
+
+        for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
+            SEL sel = sel_registerName(methods[i].name);
+            if (!class_addMethod(cls, sel, methods[i].imp, "v@:")) {
+                // 如果添加失败（可能已存在），尝试替换
+                class_replaceMethod(cls, sel, methods[i].imp, "v@:");
+            }
+        }
+    }
+}
