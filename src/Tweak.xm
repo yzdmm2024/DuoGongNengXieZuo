@@ -10,7 +10,6 @@
 + (id)sharedInstance;
 - (void)dismissKeyboard;
 - (void)undo:(id)sender;
-- (void)redo:(id)sender;
 - (void)paste:(id)sender;
 - (void)selectAll:(id)sender;
 - (void)moveBackward:(id)sender;
@@ -23,70 +22,106 @@
 static NSMutableArray *clipboardHistory = nil;
 static NSArray *quickPhrases = nil;
 static const NSUInteger kMaxClipboardItems = 20;
+// isLayoutBusy 已移除，改用 dispatch_once 避免重复创建
 
-#pragma mark - 初始化
+#pragma mark - 懒加载初始化
 
-__attribute__((constructor))
-static void initPlugin() {
-    clipboardHistory = [[NSMutableArray alloc] init];
-    quickPhrases = @[
-        @"好的", @"收到", @"谢谢", @"不客气",
-        @"好的，马上处理", @"收到，稍后回复",
-        @"请稍等", @"没问题", @"了解",
-        @"OK", @"Got it", @"Thanks", @"Sure",
-        @"等一下", @"马上到", @"辛苦了"
-    ];
+static void initClipboardOnce() {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        clipboardHistory = [[NSMutableArray alloc] init];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIPasteboardChangedNotification
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification *note)
+        {
+            @try {
+                NSString *text = [UIPasteboard generalPasteboard].string;
+                if (text.length == 0) return;
+                if ([clipboardHistory.firstObject isEqualToString:text]) return;
+                [clipboardHistory insertObject:text atIndex:0];
+                if (clipboardHistory.count > kMaxClipboardItems) {
+                    [clipboardHistory removeLastObject];
+                }
+            } @catch(NSException *e) {}
+        }];
+    });
+}
 
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIPasteboardChangedNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note)
-    {
-        NSString *text = [UIPasteboard generalPasteboard].string;
-        if (text.length == 0) return;
-        if ([clipboardHistory.firstObject isEqualToString:text]) return;
-        [clipboardHistory insertObject:text atIndex:0];
-        if (clipboardHistory.count > kMaxClipboardItems) {
-            [clipboardHistory removeLastObject];
-        }
-    }];
+static void initPhrasesOnce() {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        quickPhrases = @[
+            @"好的", @"收到", @"谢谢", @"不客气",
+            @"好的，马上处理", @"收到，稍后回复",
+            @"请稍等", @"没问题", @"了解",
+            @"OK", @"Got it", @"Thanks", @"Sure",
+            @"等一下", @"马上到", @"辛苦了"
+        ];
+    });
 }
 
 #pragma mark - 工具函数
 
 static UIButton* createButton(NSString *sfSymbol, SEL action, id target) {
-    UIImage *img = [UIImage systemImageNamed:sfSymbol];
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-    [btn setImage:img forState:UIControlStateNormal];
-    [btn setTintColor:[UIColor labelColor]];
-    [btn addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
-    return btn;
+    @try {
+        UIImage *img = [UIImage systemImageNamed:sfSymbol];
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+        if (img) [btn setImage:img forState:UIControlStateNormal];
+        [btn setTintColor:[UIColor labelColor]];
+        [btn addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+        return btn;
+    } @catch(NSException *e) {
+        return nil;
+    }
 }
 
-static void haptic() {
-    UIImpactFeedbackGenerator *gen = [[UIImpactFeedbackGenerator alloc] init];
-    [gen impactOccurred];
+static UIView* separator() {
+    UILabel *sep = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 1, 24)];
+    sep.backgroundColor = [UIColor systemGray4Color];
+    return sep;
 }
 
 static UIViewController* topViewController() {
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    UIViewController *root = keyWindow.rootViewController;
-    while (root.presentedViewController) {
-        root = root.presentedViewController;
+    @try {
+        UIWindow *keyWindow = nil;
+        if (@available(iOS 13.0, *)) {
+            NSSet<UIScene *> *scenes = [UIApplication sharedApplication].connectedScenes;
+            for (UIScene *scene in scenes) {
+                if (scene.activationState == UISceneActivationStateForegroundActive) {
+                    keyWindow = ((UIWindowScene *)scene).keyWindow;
+                    break;
+                }
+            }
+            if (!keyWindow && [scenes anyObject]) {
+                keyWindow = ((UIWindowScene *)[scenes anyObject]).keyWindow;
+            }
+        }
+        if (!keyWindow) return nil;
+        UIViewController *root = keyWindow.rootViewController;
+        while (root.presentedViewController) {
+            root = root.presentedViewController;
+        }
+        return root;
+    } @catch(NSException *e) {
+        return nil;
     }
-    return root;
 }
 
 #pragma mark - 剪贴板历史弹窗
 
 static void showClipboardHistory() {
+    initClipboardOnce();
+    UIViewController *vc = topViewController();
+    if (!vc) return;
+
     if (clipboardHistory.count == 0) {
         UIAlertController *alert = [UIAlertController
             alertControllerWithTitle:@"剪贴板历史"
                              message:@"暂无复制记录"
                       preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        [topViewController() presentViewController:alert animated:YES completion:nil];
+        [vc presentViewController:alert animated:YES completion:nil];
         return;
     }
 
@@ -98,8 +133,10 @@ static void showClipboardHistory() {
     for (NSString *item in clipboardHistory) {
         NSString *display = item.length > 40 ? [[item substringToIndex:40] stringByAppendingString:@"…"] : item;
         [alert addAction:[UIAlertAction actionWithTitle:display style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            [UIPasteboard generalPasteboard].string = item;
-            [[UIKeyboardImpl sharedInstance] paste:nil];
+            @try {
+                [UIPasteboard generalPasteboard].string = item;
+                [[UIKeyboardImpl sharedInstance] paste:nil];
+            } @catch(NSException *e) {}
         }]];
     }
 
@@ -107,12 +144,16 @@ static void showClipboardHistory() {
         [clipboardHistory removeAllObjects];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [topViewController() presentViewController:alert animated:YES completion:nil];
+    [vc presentViewController:alert animated:YES completion:nil];
 }
 
 #pragma mark - 快捷短语弹窗
 
 static void showQuickPhrases() {
+    initPhrasesOnce();
+    UIViewController *vc = topViewController();
+    if (!vc) return;
+
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"快捷短语"
                          message:nil
@@ -120,20 +161,14 @@ static void showQuickPhrases() {
 
     for (NSString *phrase in quickPhrases) {
         [alert addAction:[UIAlertAction actionWithTitle:phrase style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            [[UIKeyboardImpl sharedInstance] insertText:phrase];
+            @try {
+                [[UIKeyboardImpl sharedInstance] insertText:phrase];
+            } @catch(NSException *e) {}
         }]];
     }
 
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [topViewController() presentViewController:alert animated:YES completion:nil];
-}
-
-#pragma mark - 分隔线
-
-static UIView* separator() {
-    UILabel *sep = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 1, 24)];
-    sep.backgroundColor = [UIColor systemGray4Color];
-    return sep;
+    [vc presentViewController:alert animated:YES completion:nil];
 }
 
 #pragma mark - Hook
@@ -143,86 +178,83 @@ static UIView* separator() {
 - (void)layoutSubviews {
     %orig;
 
-    UIView *old = [self viewWithTag:999];
-    [old removeFromSuperview];
+    // 只创建一次工具栏，避免每次 layoutSubviews 都重建导致 watchdog 超时
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        @try {
+            UIStackView *stack = [[UIStackView alloc] init];
+            stack.tag = 999;
+            stack.axis = UILayoutConstraintAxisHorizontal;
+            stack.distribution = UIStackViewDistributionEqualSpacing;
+            stack.alignment = UIStackViewAlignmentCenter;
+            stack.spacing = 6;
+            stack.translatesAutoresizingMaskIntoConstraints = NO;
 
-    UIStackView *stack = [[UIStackView alloc] init];
-    stack.tag = 999;
-    stack.axis = UILayoutConstraintAxisHorizontal;
-    stack.distribution = UIStackViewDistributionEqualSpacing;
-    stack.alignment = UIStackViewAlignmentCenter;
-    stack.spacing = 6;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
+            [self addSubview:stack];
+            [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
+            [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-6].active = YES;
 
-    [self addSubview:stack];
-    [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor].active = YES;
-    [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-6].active = YES;
+            UIButton *b;
+            b = createButton(@"arrow.uturn.backward", @selector(didTapUndo), self);
+            if (b) [stack addArrangedSubview:b];
+            b = createButton(@"selection.pin.in.out",  @selector(didTapSelectAll), self);
+            if (b) [stack addArrangedSubview:b];
+            b = createButton(@"doc.on.clipboard",      @selector(didTapPaste), self);
+            if (b) [stack addArrangedSubview:b];
 
-    /* 撤销 */
-    [stack addArrangedSubview:createButton(@"arrow.uturn.backward", @selector(didTapUndo), self)];
-    /* 全选 */
-    [stack addArrangedSubview:createButton(@"selection.pin.in.out",  @selector(didTapSelectAll), self)];
-    /* 粘贴 */
-    [stack addArrangedSubview:createButton(@"doc.on.clipboard",      @selector(didTapPaste), self)];
+            [stack addArrangedSubview:separator()];
 
-    [stack addArrangedSubview:separator()];
+            b = createButton(@"arrow.left",  @selector(didTapMoveLeft), self);
+            if (b) [stack addArrangedSubview:b];
+            b = createButton(@"arrow.right", @selector(didTapMoveRight), self);
+            if (b) [stack addArrangedSubview:b];
 
-    /* 光标左移 */
-    [stack addArrangedSubview:createButton(@"arrow.left",  @selector(didTapMoveLeft), self)];
-    /* 光标右移 */
-    [stack addArrangedSubview:createButton(@"arrow.right", @selector(didTapMoveRight), self)];
+            [stack addArrangedSubview:separator()];
 
-    [stack addArrangedSubview:separator()];
+            b = createButton(@"list.clipboard", @selector(didTapClipboardHistory), self);
+            if (b) [stack addArrangedSubview:b];
+            b = createButton(@"text.quote",     @selector(didTapQuickPhrases), self);
+            if (b) [stack addArrangedSubview:b];
 
-    /* 剪贴板历史 */
-    [stack addArrangedSubview:createButton(@"list.clipboard", @selector(didTapClipboardHistory), self)];
-    /* 快捷短语 */
-    [stack addArrangedSubview:createButton(@"text.quote",     @selector(didTapQuickPhrases), self)];
+            [stack addArrangedSubview:separator()];
 
-    [stack addArrangedSubview:separator()];
-
-    /* 收起 */
-    [stack addArrangedSubview:createButton(@"keyboard.chevron.compact.down", @selector(didTapDismiss), self)];
+            b = createButton(@"keyboard.chevron.compact.down", @selector(didTapDismiss), self);
+            if (b) [stack addArrangedSubview:b];
+        } @catch(NSException *e) {
+        }
+    });
 }
 
 - (void)didTapUndo {
-    haptic();
-    [[UIKeyboardImpl sharedInstance] undo:nil];
+    @try { [[UIKeyboardImpl sharedInstance] undo:nil]; } @catch(NSException *e) {}
 }
 
 - (void)didTapSelectAll {
-    haptic();
-    [[UIKeyboardImpl sharedInstance] selectAll:nil];
+    @try { [[UIKeyboardImpl sharedInstance] selectAll:nil]; } @catch(NSException *e) {}
 }
 
 - (void)didTapPaste {
-    haptic();
-    [[UIKeyboardImpl sharedInstance] paste:nil];
+    @try { [[UIKeyboardImpl sharedInstance] paste:nil]; } @catch(NSException *e) {}
 }
 
 - (void)didTapMoveLeft {
-    haptic();
-    [[UIKeyboardImpl sharedInstance] moveBackward:nil];
+    @try { [[UIKeyboardImpl sharedInstance] moveBackward:nil]; } @catch(NSException *e) {}
 }
 
 - (void)didTapMoveRight {
-    haptic();
-    [[UIKeyboardImpl sharedInstance] moveForward:nil];
+    @try { [[UIKeyboardImpl sharedInstance] moveForward:nil]; } @catch(NSException *e) {}
 }
 
 - (void)didTapClipboardHistory {
-    haptic();
     showClipboardHistory();
 }
 
 - (void)didTapQuickPhrases {
-    haptic();
     showQuickPhrases();
 }
 
 - (void)didTapDismiss {
-    haptic();
-    [[UIKeyboardImpl sharedInstance] dismissKeyboard];
+    @try { [[UIKeyboardImpl sharedInstance] dismissKeyboard]; } @catch(NSException *e) {}
 }
 
 %end

@@ -2,7 +2,7 @@ name: Build 多功能写作
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -11,17 +11,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ldid
-        run: brew install ldid
+      - name: Install dependencies
+        run: |
+          brew install ldid xz
+          sudo mkdir -p /opt/theos
+          sudo chown $(whoami) /opt/theos
+          git clone --recursive https://github.com/theos/theos.git /opt/theos
+          curl -L -o /opt/theos/bin/ldid https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_macosx_arm64
+          chmod +x /opt/theos/bin/ldid
 
       - name: Build
         run: |
-          chmod +x build_tweak.sh
-          ./build_tweak.sh
+          export THEOS=/opt/theos
+          make clean 2>/dev/null || true
+          make package 2>&1 || true
+          # Copy dylib to workspace root for upload
+          find . -name "多功能写作.dylib" -exec cp {} ./ \;
+          echo "=== Output files ==="
+          find . -name "*.deb" -o -name "*.dylib" | head -20
+          ls -lh *.dylib 2>/dev/null || true
 
-      - name: Upload dylib
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: 多功能写作
-          path: build/多功能写作.dylib
+          path: |
+            *.dylib
+            packages/*.deb
           if-no-files-found: error
