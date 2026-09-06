@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>title</key>
-	<string>键盘下方状态 1.0.12</string>
+	<string>键盘下方状态 1.1.0</string>
 	<key>items</key>
 	<array>
 		<dict>
@@ -142,11 +142,35 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSCustomCell</string>
+			<key>cellClass</key>
+			<string>KSMenuCell</string>
+			<key>label</key>
+			<string>按钮排序（拖动调整键盘从左到右）</string>
+			<key>menu</key>
+			<string>order</string>
+			<key>height</key>
+			<real>44</real>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>快捷启动</string>
 			<key>footerText</key>
-			<string>开启「快捷启动按钮」后，点工具栏最后一个按钮即跳转到下面填的地址。支持任意 App 的 URL Scheme（weixin:// 微信、alipays:// 支付宝、snssdk1233:// 抖音等）和系统设置页（App-prefs:root=General）。控制中心/后台切换属系统级手势，App 内无法拉起，故用跳转代替。</string>
+			<string>开启「快捷启动按钮」后，点工具栏上的切换按钮即跳到所选 App。推荐点「选择跳转 App」从列表里选（带图标、点选即设、自动替换旧选择）；下面的手输框是高级选项，可填任意 URL Scheme（如 App-prefs:root=General 跳系统设置）。控制中心/后台切换属系统级手势，App 内无法拉起。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSCustomCell</string>
+			<key>cellClass</key>
+			<string>KSMenuCell</string>
+			<key>label</key>
+			<string>选择跳转 App（带图标，点选即设）</string>
+			<key>menu</key>
+			<string>apppicker</string>
+			<key>height</key>
+			<real>44</real>
 		</dict>
 		<dict>
 			<key>cell</key>

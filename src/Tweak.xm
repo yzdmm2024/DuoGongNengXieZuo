@@ -386,10 +386,20 @@ static char kKSBtmKey;
         CGFloat lift     = KSFloat(@"toolbarLift", 35); // 底部抬高量（避开 dock 行与语音键）
 
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4); // 图标间隔
-        // 重建签名：图标大小 + 图标间隔 + 全部功能开关，任一变化都重建整个工具栏
-        //（旧版只有 iconSize 变了才重建，导致「关掉某功能按钮还在」）
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%d|%d|%d|%d|%d|%d|%d|%d",
-            iconSize, spacing,
+        // 自定义顺序（面板「按钮排序」写入 toolbarOrder；非法/缺项按默认补齐）
+        NSArray *defOrder = @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
+                              @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction"];
+        NSMutableArray *finalOrder = [NSMutableArray array];
+        id savedOrder = KSCopyPref(@"toolbarOrder");
+        if ([savedOrder isKindOfClass:[NSArray class]]) {
+            for (id o in savedOrder)
+                if ([defOrder containsObject:o] && ![finalOrder containsObject:o]) [finalOrder addObject:o];
+        }
+        for (NSString *k in defOrder)
+            if (![finalOrder containsObject:k]) [finalOrder addObject:k];
+        // 重建签名：图标大小 + 图标间隔 + 顺序 + 全部功能开关，任一变化都重建整个工具栏
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d",
+            iconSize, spacing, [finalOrder componentsJoinedByString:@","],
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
             KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO)];
@@ -411,19 +421,30 @@ static char kKSBtmKey;
             [self addSubview:stack];
 
             UIButton *b;
-            if (KSBool(@"showSelectAll", YES)) { b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), self, iconSize); if (b) [stack addArrangedSubview:b]; }
-            if (KSBool(@"showCut", YES))       { b = ksMakeButton(@"scissors",           @"剪", @selector(ksActCut),       self, iconSize); if (b) [stack addArrangedSubview:b]; }
-            if (KSBool(@"showPaste", YES))     { b = ksMakeButton(@"doc.on.clipboard",   @"粘", @selector(ksActPaste),     self, iconSize); if (b) [stack addArrangedSubview:b]; }
-            if (KSBool(@"showClipboard", YES)) { [stack addArrangedSubview:ksSeparator()];
-                                                 b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), self, iconSize); if (b) [stack addArrangedSubview:b]; }
-            if (KSBool(@"showPhrases", YES))   { b = ksMakeButton(@"text.quote",     @"语", @selector(ksActPhrases),  self, iconSize); if (b) [stack addArrangedSubview:b]; }
-            if (KSBool(@"showCursor", YES))    { [stack addArrangedSubview:ksSeparator()];
-                                                 b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  self, iconSize); if (b) [stack addArrangedSubview:b];
-                                                 b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), self, iconSize); if (b) [stack addArrangedSubview:b]; }
-            if (KSBool(@"showDismiss", YES))   { [stack addArrangedSubview:ksSeparator()];
-                                                 b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b]; }
-            if (KSBool(@"showQuickAction", NO)){ [stack addArrangedSubview:ksSeparator()];
-                                                 b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            for (NSString *k in finalOrder) {
+                if ([k isEqualToString:@"showSelectAll"] && KSBool(k, YES)) {
+                    b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showCut"] && KSBool(k, YES)) {
+                    b = ksMakeButton(@"scissors", @"剪", @selector(ksActCut), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showPaste"] && KSBool(k, YES)) {
+                    b = ksMakeButton(@"doc.on.clipboard", @"粘", @selector(ksActPaste), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showClipboard"] && KSBool(k, YES)) {
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showPhrases"] && KSBool(k, YES)) {
+                    b = ksMakeButton(@"text.quote", @"语", @selector(ksActPhrases), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showCursor"] && KSBool(k, YES)) {
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showDismiss"] && KSBool(k, YES)) {
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showQuickAction"] && KSBool(k, NO)) {
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b];
+                }
+            }
 
             NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor constant:offX];
             NSLayoutConstraint *btm = [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-lift];

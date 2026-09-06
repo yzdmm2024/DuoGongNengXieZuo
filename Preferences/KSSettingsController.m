@@ -88,10 +88,25 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 #pragma mark - 实时预览 cell：固定键盘主体 + 实时工具栏（可拖动调位置）
 
-static NSString * const ksBtnOrder[] = {
-    @"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-    @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction"
-};
+static NSArray *ksDefaultButtonOrder(void) {
+    return @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
+             @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction"];
+}
+
+// 用户自定义顺序（toolbarOrder）与默认顺序合并：非法/缺失项按默认补齐
+static NSArray *ksFinalButtonOrder(void) {
+    NSArray *def = ksDefaultButtonOrder();
+    NSMutableArray *outOrder = [NSMutableArray array];
+    id saved = KSPrefDict()[@"toolbarOrder"];
+    if ([saved isKindOfClass:[NSArray class]]) {
+        for (id o in saved)
+            if ([o isKindOfClass:[NSString class]] && [def containsObject:o] && ![outOrder containsObject:o])
+                [outOrder addObject:o];
+    }
+    for (NSString *k in def)
+        if (![outOrder containsObject:k]) [outOrder addObject:k];
+    return outOrder;
+}
 static NSDictionary *ksBtnSpecs(void) {
     return @{
         @"showSelectAll":  @[@"selection.pin.in.out", @"全"],
@@ -175,8 +190,7 @@ static NSDictionary *ksBtnSpecs(void) {
         } while(0)
 
         NSDictionary *specs = ksBtnSpecs();
-        for (NSUInteger i = 0; i < sizeof(ksBtnOrder)/sizeof(ksBtnOrder[0]); i++) {
-            NSString *k = ksBtnOrder[i];
+        for (NSString *k in ksFinalButtonOrder()) {
             if ([k isEqualToString:@"showCursor"]) {
                 if (!KSBool(@"showCursor", YES)) continue;
                 KSPREV_SEP();
@@ -233,8 +247,9 @@ static NSDictionary *ksBtnSpecs(void) {
         CGFloat iconSize = KSFloat(@"iconSize", 15);
         // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4);
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%d%d%d%d%d%d%d%d%d",
-            iconSize, spacing,
+        NSString *orderSig = [ksFinalButtonOrder() componentsJoinedByString:@","];
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d",
+            iconSize, spacing, orderSig,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
             KSBool(@"showSelectAll", YES) ? 1 : 0,
             KSBool(@"showCut", YES) ? 1 : 0,
@@ -372,6 +387,236 @@ static NSDictionary *ksBtnSpecs(void) {
         }
         KSPostChanged();
     } @catch (NSException *e) {}
+}
+
+@end
+
+#pragma mark - 子菜单入口 cell（点击 push 子页面）
+
+@class KSOrderViewController;
+@class KSAppPickerViewController;
+
+@interface KSMenuCell : PSTableCell
+@end
+
+@implementation KSMenuCell {
+    PSSpecifier *_spec;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
+    self = [super initWithStyle:style reuseIdentifier:rid];
+    if (self) {
+        self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(ksOpen)];
+        [self addGestureRecognizer:tap];
+    }
+    return self;
+}
+
+- (void)setSpecifier:(PSSpecifier *)spec {
+    [super setSpecifier:spec];
+    _spec = spec;
+}
+
+- (UIViewController *)ksOwningVC {
+    UIResponder *r = self.nextResponder;
+    while (r && ![r isKindOfClass:[UIViewController class]]) r = r.nextResponder;
+    return (UIViewController *)r;
+}
+
+- (void)ksOpen {
+    @try {
+        NSString *menu = [_spec propertyForKey:@"menu"];
+        UIViewController *owner = [self ksOwningVC];
+        if (!owner.navigationController) return;
+        UIViewController *target = nil;
+        if ([menu isEqualToString:@"order"]) target = [[KSOrderViewController alloc] init];
+        else if ([menu isEqualToString:@"apppicker"]) target = [[KSAppPickerViewController alloc] init];
+        if (target) [owner.navigationController pushViewController:target animated:YES];
+    } @catch (NSException *e) {}
+}
+
+@end
+
+#pragma mark - 按钮排序页（拖动上下 = 键盘从左到右，即拖即存即生效）
+
+@interface KSOrderViewController : UITableViewController
+@end
+
+@implementation KSOrderViewController {
+    NSMutableArray *_keys;
+    NSDictionary   *_names;
+}
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (self) {
+        self.title = @"按钮排序";
+        _names = @{@"showSelectAll": @"全选", @"showCut": @"剪切", @"showPaste": @"粘贴",
+                   @"showClipboard": @"剪贴板历史", @"showPhrases": @"快捷短语",
+                   @"showCursor": @"光标左右移", @"showDismiss": @"收起键盘",
+                   @"showQuickAction": @"快捷启动"};
+        _keys = [ksFinalButtonOrder() mutableCopy];
+    }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                                                      target:self action:@selector(done)];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [_keys removeAllObjects];
+    [_keys addObjectsFromArray:ksFinalButtonOrder()];
+    [self.tableView setEditing:YES animated:NO];
+    [self.tableView reloadData];
+}
+
+- (void)done { [self.navigationController popViewControllerAnimated:YES]; }
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _keys.count; }
+
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"k" forIndexPath:ip];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"k"];
+    NSString *k = _keys[ip.row];
+    c.textLabel.text = _names[k] ?: k;
+    c.detailTextLabel.text = [NSString stringWithFormat:@"键盘上第 %lu 个", (unsigned long)ip.row + 1];
+    return c;
+}
+
+- (BOOL)tableView:(UITableView *)tv canMoveRowAtIndexPath:(NSIndexPath *)ip { return YES; }
+
+- (UITableViewCellEditingStyle)tableView:(UITableView *)tv editingStyleForRowAtIndexPath:(NSIndexPath *)ip {
+    return UITableViewCellEditingStyleNone;
+}
+
+- (BOOL)tableView:(UITableView *)tv shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)ip { return NO; }
+
+- (void)tableView:(UITableView *)tv moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
+    NSString *k = _keys[from.row];
+    [_keys removeObjectAtIndex:from.row];
+    [_keys insertObject:k atIndex:to.row];
+    for (NSInteger i = 0; i < (NSInteger)_keys.count; i++) {
+        UITableViewCell *c = [tv cellForRowAtIndexPath:[NSIndexPath indexPathForRow:i inSection:0]];
+        c.detailTextLabel.text = [NSString stringWithFormat:@"键盘上第 %lu 个", (unsigned long)i + 1];
+    }
+    KSWriteKey(@"toolbarOrder", _keys); // 即存即广播：真实键盘与预览实时变
+}
+
+@end
+
+#pragma mark - App 选择页（全部第三方 App 带图标，点选即设并自动返回）
+
+@interface LSApplicationWorkspace : NSObject
++ (instancetype)defaultWorkspace;
+- (NSArray *)allInstalledApplications;
+@end
+
+@interface LSApplicationProxy : NSObject
+- (NSString *)localizedName;
+- (NSString *)bundleIdentifier;
+- (id)objectForInfoDictionaryKey:(NSString *)key;
+@end
+
+@interface UIImage (KSIconPriv)
++ (UIImage *)_applicationIconImageForBundleIdentifier:(NSString *)bid format:(NSInteger)fmt;
+@end
+
+@interface KSAppPickerViewController : UITableViewController
+@end
+
+@implementation KSAppPickerViewController {
+    NSMutableArray *_apps; // @{bid,name,icon,scheme}
+    NSString *_selectedBid;
+}
+
+- (instancetype)init {
+    self = [super initWithStyle:UITableViewStylePlain];
+    if (self) { self.title = @"选择跳转 App"; }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [self ksLoad];
+    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"a"];
+}
+
+// 列全部第三方 App；跳转 scheme 直接读 App 自己声明的 CFBundleURLTypes
+- (void)ksLoad {
+    NSMutableArray *list = [NSMutableArray array];
+    @try {
+        NSArray *all = [[LSApplicationWorkspace defaultWorkspace] allInstalledApplications] ?: @[];
+        for (LSApplicationProxy *p in all) {
+            NSString *bid = p.bundleIdentifier;
+            if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+            if ([bid hasPrefix:@"com.apple."]) continue;
+            NSString *name = p.localizedName ?: bid;
+            UIImage *icon = nil;
+            if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
+                icon = [UIImage _applicationIconImageForBundleIdentifier:bid format:2];
+            if (!icon && [p respondsToSelector:@selector(icon)])
+                icon = [p performSelector:@selector(icon)];
+            NSString *scheme = nil;
+            id types = [p objectForInfoDictionaryKey:@"CFBundleURLTypes"];
+            if ([types isKindOfClass:[NSArray class]]) {
+                for (NSDictionary *t in types) {
+                    id names = [t objectForKey:@"CFBundleURLSchemes"];
+                    if ([names isKindOfClass:[NSArray class]] && names.count) {
+                        NSString *s = [names firstObject];
+                        if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
+                    }
+                }
+            }
+            [list addObject:@{ @"bid": bid, @"name": name,
+                               @"icon": icon ?: [NSNull null],
+                               @"scheme": scheme ?: @"" }];
+        }
+    } @catch (NSException *e) {}
+    [list sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [a[@"name"] compare:b[@"name"]];
+    }];
+    _apps = list;
+    _selectedBid = KSPrefDict()[@"quickActionBundleId"];
+    if (![_selectedBid isKindOfClass:[NSString class]]) _selectedBid = nil;
+}
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _apps.count; }
+
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"a" forIndexPath:ip];
+    NSDictionary *a = _apps[ip.row];
+    c.textLabel.text = a[@"name"];
+    NSString *scheme = a[@"scheme"];
+    c.detailTextLabel.text = scheme.length ? [scheme stringByAppendingString:@"://"] : @"无 URL Scheme，不可选";
+    c.detailTextLabel.textColor = scheme.length ? [UIColor secondaryLabelColor] : [UIColor systemRedColor];
+    UIImage *icon = a[@"icon"];
+    if ([icon isKindOfClass:[UIImage class]]) c.imageView.image = icon;
+    else c.imageView.image = nil;
+    c.accessoryType = [a[@"bid"] isEqualToString:_selectedBid]
+        ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    return c;
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    NSDictionary *a = _apps[ip.row];
+    NSString *scheme = a[@"scheme"];
+    if (![scheme isKindOfClass:[NSString class]] || !scheme.length) return; // 无 scheme 的不可选
+    _selectedBid = a[@"bid"];
+    KSWriteKey(@"quickActionBundleId", _selectedBid); // 记录选择（勾选用）
+    KSWriteKey(@"quickActionURL", [scheme stringByAppendingString:@"://"]); // 工具栏按钮实际跳这个
+    [tv reloadData];
+    // 单选完成即自动返回（选择自动替换上次选择）
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [self.navigationController popViewControllerAnimated:YES];
+    });
 }
 
 @end

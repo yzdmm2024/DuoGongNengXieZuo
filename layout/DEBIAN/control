@@ -1,6 +1,6 @@
 Package: com.yzdmm.keyboardstatus
 Name: 键盘下方状态
-Version: 1.0.12
+Version: 1.1.0
 Architecture: iphoneos-arm64
 Depends: firmware (>= 16.0), mobilesubstrate, preferenceloader
 Maintainer: yzdmm
