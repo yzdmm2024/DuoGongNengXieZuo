@@ -339,15 +339,28 @@ static void ksActCursorRight(id s, SEL _c) {
 }
 static void ksActClipboard(id s, SEL _c) { ksShowClipboardHistory(s); }
 static void ksActPhrases(id s, SEL _c)  { ksShowQuickPhrases(s); }
-// 快捷启动：读 quickActionURL 直跳（任意 App 的 URL Scheme / App-prefs 系统设置页）
-// 控制中心、后台切换是 SpringBoard 级手势，App 内无法拉起，故用 URL 跳转代替
+// 快捷启动：优先 quickActionURL（URL Scheme / App-prefs 系统设置页）
+// 无 Scheme 的 App：用私有 LSApplicationWorkspace openApplicationWithBundleURL: 按 bundle id 直接拉起
 static void ksActQuickLaunch(id s, SEL _c) {
     @try {
         NSString *urlStr = KSCopyPref(@"quickActionURL");
-        if (![urlStr isKindOfClass:[NSString class]] || urlStr.length == 0) return;
-        NSURL *u = [NSURL URLWithString:urlStr];
-        if (!u) return;
-        [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+        if ([urlStr isKindOfClass:[NSString class]] && urlStr.length > 0) {
+            NSURL *u = [NSURL URLWithString:urlStr];
+            if (u) {
+                [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+                return;
+            }
+        }
+        // 兜底：无 Scheme，按 bundle id 拉起（bundle://com.xxx）
+        NSString *bid = KSCopyPref(@"quickActionBundleId");
+        if (![bid isKindOfClass:[NSString class]] || bid.length == 0) return;
+        Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
+        if (!wsCls) return;
+        id ws = [(id)wsCls performSelector:@selector(defaultWorkspace)];
+        if (!ws) return;
+        NSURL *bu = [NSURL URLWithString:[NSString stringWithFormat:@"bundle://%@", bid]];
+        if (!bu) return;
+        [ws performSelector:@selector(openApplicationWithBundleURL:) withObject:bu];
     } @catch (NSException *e) {}
 }
 

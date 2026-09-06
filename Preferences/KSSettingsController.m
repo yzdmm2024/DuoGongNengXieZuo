@@ -556,6 +556,15 @@ static NSDictionary *ksBtnSpecs(void) {
     [self.tableView reloadData];
 }
 
+// 图标等比降到标准 29pt（cell 行高不至被大图标撑爆；format:2 原始尺寸过大）
+static UIImage *ksIconStd(UIImage *img) {
+    if (![img isKindOfClass:[UIImage class]]) return nil;
+    CGFloat w = img.size.width;
+    if (w <= 29.0 || w <= 0) return img;
+    return [UIImage imageWithCGImage:img.CGImage scale:(w / 29.0)
+                                          orientation:UIImageOrientationUp];
+}
+
 // 从 LSApplicationProxy 取 CFBundleURLSchemes（workspace/proxy 两通道共用）
 - (NSString *)ksSchemeOfProxy:(LSApplicationProxy *)p {
     NSString *scheme = @"";
@@ -650,7 +659,7 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
                     if (![name isKindOfClass:[NSString class]] || name.length == 0) name = bid;
                     UIImage *icon = nil;
                     if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
-                        icon = [UIImage _applicationIconImageForBundleIdentifier:bid format:2];
+                        icon = ksIconStd([UIImage _applicationIconImageForBundleIdentifier:bid format:2]);
                     [list addObject:@{ @"bid": bid, @"name": name,
                                        @"icon": icon ?: [NSNull null],
                                        @"scheme": [self ksSchemeOfProxy:p] }];
@@ -725,15 +734,15 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
     c.textLabel.text = a[@"name"];
     c.textLabel.numberOfLines = 1;
     NSString *scheme = a[@"scheme"];
-    c.detailTextLabel.text = scheme.length ? [scheme stringByAppendingString:@"://"] : @"无 URL Scheme，不可选";
+    c.detailTextLabel.text = scheme.length ? [scheme stringByAppendingString:@"://"] : @"无 Scheme · 点选后直接拉起";
     c.detailTextLabel.numberOfLines = 1;
     c.detailTextLabel.font = nil;
-    c.detailTextLabel.textColor = scheme.length ? [UIColor secondaryLabelColor] : [UIColor systemRedColor];
+    c.detailTextLabel.textColor = [UIColor secondaryLabelColor];
     UIImage *icon = a[@"icon"];
     if (![icon isKindOfClass:[UIImage class]]) {
         // 扫盘/代理兜底条目无图标：cell 复用时懒加载一次
         if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
-            icon = [UIImage _applicationIconImageForBundleIdentifier:a[@"bid"] format:2];
+            icon = ksIconStd([UIImage _applicationIconImageForBundleIdentifier:a[@"bid"] format:2]);
         if ([icon isKindOfClass:[UIImage class]]) {
             NSMutableDictionary *m = [a mutableCopy];
             m[@"icon"] = icon;
@@ -753,11 +762,13 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (_filtered.count == 0 || ip.row >= (NSInteger)_filtered.count) return;
     NSDictionary *a = _filtered[ip.row];
-    NSString *scheme = a[@"scheme"];
-    if (![scheme isKindOfClass:[NSString class]] || !scheme.length) return; // 无 scheme 的不可选
     _selectedBid = a[@"bid"];
     KSWriteKey(@"quickActionBundleId", _selectedBid); // 记录选择（勾选用）
-    KSWriteKey(@"quickActionURL", [scheme stringByAppendingString:@"://"]); // 工具栏按钮实际跳这个
+    NSString *scheme = a[@"scheme"];
+    // 有 Scheme 写 scheme://（openURL 跳转）；无 Scheme 写空串，工具栏按 bundle id 私有 API 拉起
+    KSWriteKey(@"quickActionURL",
+               ([scheme isKindOfClass:[NSString class]] && scheme.length)
+                   ? [scheme stringByAppendingString:@"://"] : @"");
     [tv reloadData];
     // 单选完成即自动返回（选择自动替换上次选择）
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
