@@ -93,32 +93,36 @@ static void ksSavePhrases(NSArray *phrases) {
 
 #pragma mark - UI 辅助
 
-static UIResponder *ksFindFirstResponder(void) {
+// 14.5 SDK 无 UIWindowScene.keyWindow(iOS 15+)，用 windows+isKeyWindow(iOS13 即有) 兼容查找
+static UIWindow *ksKeyWindow(void) {
     @try {
-        UIWindow *kw = nil;
+        UIApplication *app = [UIApplication sharedApplication];
+        NSMutableArray *wins = [NSMutableArray array];
         if (@available(iOS 13.0, *)) {
-            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-                if (((UIWindowScene *)s).activationState == UISceneActivationStateForegroundActive) {
-                    kw = ((UIWindowScene *)s).keyWindow; break;
+            for (UIScene *s in app.connectedScenes) {
+                if ([s isKindOfClass:[UIWindowScene class]]) {
+                    [wins addObjectsFromArray:((UIWindowScene *)s).windows];
                 }
             }
         }
-        if (!kw) kw = [UIApplication sharedApplication].keyWindow;
+        if (wins.count == 0) [wins addObjectsFromArray:app.windows];
+        for (UIWindow *w in wins) {
+            if (w.isKeyWindow) return w;
+        }
+        return wins.lastObject;
+    } @catch (NSException *e) { return nil; }
+}
+
+static UIResponder *ksFindFirstResponder(void) {
+    @try {
+        UIWindow *kw = ksKeyWindow();
         return [kw valueForKey:@"firstResponder"];
     } @catch (NSException *e) { return nil; }
 }
 
 static UIViewController *ksTopViewController(void) {
     @try {
-        UIWindow *kw = nil;
-        if (@available(iOS 13.0, *)) {
-            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-                if (((UIWindowScene *)s).activationState == UISceneActivationStateForegroundActive) {
-                    kw = ((UIWindowScene *)s).keyWindow; break;
-                }
-            }
-        }
-        if (!kw) kw = [UIApplication sharedApplication].keyWindow;
+        UIWindow *kw = ksKeyWindow();
         UIViewController *vc = kw.rootViewController;
         while (vc.presentedViewController) vc = vc.presentedViewController;
         return vc;
