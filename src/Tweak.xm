@@ -339,28 +339,26 @@ static void ksActCursorRight(id s, SEL _c) {
 }
 static void ksActClipboard(id s, SEL _c) { ksShowClipboardHistory(s); }
 static void ksActPhrases(id s, SEL _c)  { ksShowQuickPhrases(s); }
-// 快捷启动：优先 quickActionURL（URL Scheme / App-prefs 系统设置页）
-// 无 Scheme 的 App：用私有 LSApplicationWorkspace openApplicationWithBundleURL: 按 bundle id 直接拉起
+// 快捷启动：主路径 LSApplicationWorkspace openApplicationWithBundleID:
+// （iOS 16.6.1 实测：openApplicationWithBundleURL: 已不存在；openApplicationWithBundleID: 在微信沙盒内 frida 实测返回 true 拉起成功）
+// 兜底 quickActionURL 的 openURL 跳转
 static void ksActQuickLaunch(id s, SEL _c) {
     @try {
-        NSString *urlStr = KSCopyPref(@"quickActionURL");
-        if ([urlStr isKindOfClass:[NSString class]] && urlStr.length > 0) {
-            NSURL *u = [NSURL URLWithString:urlStr];
-            if (u) {
-                [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
-                return;
+        NSString *bid = KSCopyPref(@"quickActionBundleId");
+        if ([bid isKindOfClass:[NSString class]] && bid.length > 0) {
+            Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
+            id ws = wsCls ? [(id)wsCls performSelector:@selector(defaultWorkspace)] : nil;
+            if (ws && [ws respondsToSelector:@selector(openApplicationWithBundleID:)]) {
+                BOOL ok = (BOOL)[ws performSelector:@selector(openApplicationWithBundleID:) withObject:bid];
+                if (ok) return;
             }
         }
-        // 兜底：无 Scheme，按 bundle id 拉起（bundle://com.xxx）
-        NSString *bid = KSCopyPref(@"quickActionBundleId");
-        if (![bid isKindOfClass:[NSString class]] || bid.length == 0) return;
-        Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
-        if (!wsCls) return;
-        id ws = [(id)wsCls performSelector:@selector(defaultWorkspace)];
-        if (!ws) return;
-        NSURL *bu = [NSURL URLWithString:[NSString stringWithFormat:@"bundle://%@", bid]];
-        if (!bu) return;
-        [ws performSelector:@selector(openApplicationWithBundleURL:) withObject:bu];
+        // 兜底：URL Scheme openURL（兼容旧的系统设置页 app-prefs 跳转等）
+        NSString *urlStr = KSCopyPref(@"quickActionURL");
+        if (![urlStr isKindOfClass:[NSString class]] || urlStr.length == 0) return;
+        NSURL *u = [NSURL URLWithString:urlStr];
+        if (!u) return;
+        [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
     } @catch (NSException *e) {}
 }
 

@@ -495,8 +495,9 @@ static NSDictionary *ksBtnSpecs(void) {
 - (NSString *)localizedName;
 - (NSString *)bundleIdentifier;
 // iOS 16.6.1 实测：objectForInfoDictionaryKey: 不存在（unrecognized selector），
-// 取 Info.plist 字典只能用 infoDictionary
+// 取 Info.plist 字典用 infoDictionary；URL Scheme 直接用 claimedURLSchemes
 - (id)infoDictionary;
+- (NSArray *)claimedURLSchemes;
 @end
 
 // 仅声明原型（NSClassFromString 拿 Class 后强转调用，编译期不产生链接符号）
@@ -567,24 +568,34 @@ static UIImage *ksIconStd(UIImage *img) {
                                           orientation:UIImageOrientationUp];
 }
 
-// 从 LSApplicationProxy 取 CFBundleURLSchemes（workspace/proxy 两通道共用）
-// v1.2.5：objectForInfoDictionaryKey: 在 iOS 16.6.1 不存在（298 个 App 全抛 NSInvalidArgumentException 的根因），
-// 改用 infoDictionary + objectForKey，且逐层 respondsToSelector 保护
+// 从 LSApplicationProxy 取 URL Scheme（workspace/proxy 两通道共用）
+// v1.2.6：infoDictionary 返回懒加载包装对象 objectForKey 取不到数据 → 改优先 claimedURLSchemes
+// （frida 实测 iOS 16.6.1：137 个三方 App 中 100 个有 scheme，微信 16 个）
 - (NSString *)ksSchemeOfProxy:(LSApplicationProxy *)p {
     NSString *scheme = @"";
-    if (![p respondsToSelector:@selector(infoDictionary)]) return scheme;
-    id info = [p infoDictionary];
-    if (![info respondsToSelector:@selector(objectForKey:)]) return scheme;
-    id types = [info objectForKey:@"CFBundleURLTypes"];
-    if ([types isKindOfClass:[NSArray class]]) {
-        for (NSDictionary *t in types) {
-            id names = [t objectForKey:@"CFBundleURLSchemes"];
-            if ([names isKindOfClass:[NSArray class]] && [names count] > 0) {
-                NSString *s = [names firstObject];
+    @try {
+        if ([p respondsToSelector:@selector(claimedURLSchemes)]) {
+            NSArray *arr = [p claimedURLSchemes];
+            for (NSString *s in arr) {
                 if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
             }
         }
-    }
+        if (scheme.length == 0 && [p respondsToSelector:@selector(infoDictionary)]) {
+            id info = [p infoDictionary];
+            if ([info respondsToSelector:@selector(objectForKey:)]) {
+                id types = [info objectForKey:@"CFBundleURLTypes"];
+                if ([types isKindOfClass:[NSArray class]]) {
+                    for (NSDictionary *t in types) {
+                        id names = [t objectForKey:@"CFBundleURLSchemes"];
+                        if ([names isKindOfClass:[NSArray class]] && [names count] > 0) {
+                            NSString *s = [names firstObject];
+                            if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
+                        }
+                    }
+                }
+            }
+        }
+    } @catch (NSException *e) {}
     return scheme;
 }
 
