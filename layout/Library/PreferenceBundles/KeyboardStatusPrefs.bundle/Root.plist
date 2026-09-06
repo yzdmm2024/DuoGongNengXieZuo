@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>title</key>
-	<string>键盘下方状态 1.0.8</string>
+	<string>键盘下方状态 1.0.9</string>
 	<key>items</key>
 	<array>
 		<dict>
@@ -166,7 +166,13 @@
 			<key>label</key>
 			<string>位置与大小</string>
 			<key>footerText</key>
-			<string>改动立即生效，其他 App 的键盘实时跟随；也可直接拖动上面的预览工具条调位置。左右偏移负数往左；抬高越大工具栏越靠上。</string>
+			<string>改动立即生效，其他 App 的键盘实时跟随；也可直接拖动底部预览里的工具条调位置。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>左右偏移</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -175,8 +181,6 @@
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>toolbarX</string>
-			<key>label</key>
-			<string>左右偏移</string>
 			<key>min</key>
 			<real>-120</real>
 			<key>max</key>
@@ -186,13 +190,17 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>上下抬高(离底边)</string>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>toolbarLift</string>
-			<key>label</key>
-			<string>抬高(离底边)</string>
 			<key>min</key>
 			<real>0</real>
 			<key>max</key>
@@ -202,19 +210,43 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>图标大小</string>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>iconSize</string>
-			<key>label</key>
-			<string>图标大小</string>
 			<key>min</key>
 			<real>11</real>
 			<key>max</key>
 			<real>26</real>
 			<key>default</key>
 			<real>15</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>图标间隔</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>toolbarSpacing</string>
+			<key>min</key>
+			<real>0</real>
+			<key>max</key>
+			<real>24</real>
+			<key>default</key>
+			<real>4</real>
 		</dict>
 		<dict>
 			<key>cell</key>

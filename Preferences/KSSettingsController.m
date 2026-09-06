@@ -161,7 +161,7 @@ static NSDictionary *ksBtnSpecs(void) {
         _bar.axis = UILayoutConstraintAxisHorizontal;
         _bar.distribution = UIStackViewDistributionEqualSpacing;
         _bar.alignment = UIStackViewAlignmentCenter;
-        _bar.spacing = 4;
+        _bar.spacing = KSFloat(@"toolbarSpacing", 4); // 图标间隔与真实工具栏同步
         _bar.translatesAutoresizingMaskIntoConstraints = NO;
         // 与真实工具栏一致：无独立底色，图标直接浮在 cell 底色上（1:1，无键盘主体）
         [self.contentView addSubview:_bar];
@@ -232,8 +232,9 @@ static NSDictionary *ksBtnSpecs(void) {
     @try {
         CGFloat iconSize = KSFloat(@"iconSize", 15);
         // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%d%d%d%d%d%d%d%d%d",
-            iconSize,
+        CGFloat spacing = KSFloat(@"toolbarSpacing", 4);
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%d%d%d%d%d%d%d%d%d",
+            iconSize, spacing,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
             KSBool(@"showSelectAll", YES) ? 1 : 0,
             KSBool(@"showCut", YES) ? 1 : 0,

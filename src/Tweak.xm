@@ -385,10 +385,11 @@ static char kKSBtmKey;
         CGFloat offX     = KSFloat(@"toolbarX", -25);   // centerX 偏移（负=往左）
         CGFloat lift     = KSFloat(@"toolbarLift", 35); // 底部抬高量（避开 dock 行与语音键）
 
-        // 重建签名：图标大小 + 全部功能开关，任一变化都重建整个工具栏
+        CGFloat spacing = KSFloat(@"toolbarSpacing", 4); // 图标间隔
+        // 重建签名：图标大小 + 图标间隔 + 全部功能开关，任一变化都重建整个工具栏
         //（旧版只有 iconSize 变了才重建，导致「关掉某功能按钮还在」）
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%d|%d|%d|%d|%d|%d|%d|%d",
-            iconSize,
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%d|%d|%d|%d|%d|%d|%d|%d",
+            iconSize, spacing,
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
             KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO)];
@@ -405,7 +406,7 @@ static char kKSBtmKey;
             stack.axis = UILayoutConstraintAxisHorizontal;
             stack.distribution = UIStackViewDistributionEqualSpacing;
             stack.alignment = UIStackViewAlignmentCenter;
-            stack.spacing = 4;
+            stack.spacing = spacing;
             stack.translatesAutoresizingMaskIntoConstraints = NO;
             [self addSubview:stack];
 
