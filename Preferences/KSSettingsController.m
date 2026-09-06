@@ -497,6 +497,12 @@ static NSDictionary *ksBtnSpecs(void) {
 - (id)objectForInfoDictionaryKey:(NSString *)key;
 @end
 
+// 仅声明原型（NSClassFromString 拿 Class 后强转调用，编译期不产生链接符号）
+@interface LSApplicationWorkspace : NSObject
++ (id)defaultWorkspace;
+- (NSArray *)allInstalledApplications;
+@end
+
 @interface KSAppPickerViewController : UITableViewController <UISearchResultsUpdating>
 @end
 
@@ -517,7 +523,6 @@ static NSDictionary *ksBtnSpecs(void) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     [self ksLoad];
-    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"a"];
     // 搜索框（列表非空才挂上）
     if (_apps.count) {
         _searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
@@ -618,8 +623,8 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
     return list;
 }
 
-// 列全部第三方 App：通道1 workspace → 通道2 proxy.allApplications → 通道3 扫盘
-// 全空时 _diag 记录各层结果，显示在列表页供用户截图定位
+// 列全部第三方 App：通道1 workspace（类型化直调）→ 通道2 proxy.allApplications → 通道3 扫盘
+// 每个 App 独立 @try：单个坏 App 不再拖死整个通道；诊断结果同时落盘供 frida 读取
 - (void)ksLoad {
     NSMutableArray *list = [NSMutableArray array];
     NSMutableArray *diag = [NSMutableArray array];
@@ -632,44 +637,55 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
         }
         [diag addObject:[NSString stringWithFormat:@"WS:%@", wsCls ? @"有" : @"无"]];
         if (wsCls) {
-            id ws = [(id)wsCls performSelector:@selector(defaultWorkspace)];
-            NSArray *all = ws ? [ws performSelector:@selector(allInstalledApplications)] : nil;
+            LSApplicationWorkspace *ws = [(LSApplicationWorkspace *)wsCls defaultWorkspace];
+            [diag addObject:[NSString stringWithFormat:@"wsObj:%@", ws ? @"有" : @"无"]];
+            NSArray *all = [ws allInstalledApplications];
             [diag addObject:[NSString stringWithFormat:@"ws:%lu", (unsigned long)all.count]];
-            for (LSApplicationProxy *p in all) {
-                NSString *bid = p.bundleIdentifier;
-                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                if ([bid hasPrefix:@"com.apple."]) continue;
-                NSString *name = p.localizedName ?: bid;
-                UIImage *icon = nil;
-                if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
-                    icon = [UIImage _applicationIconImageForBundleIdentifier:bid format:2];
-                if (!icon && [p respondsToSelector:@selector(icon)])
-                    icon = [p performSelector:@selector(icon)];
-                [list addObject:@{ @"bid": bid, @"name": name,
-                                   @"icon": icon ?: [NSNull null],
-                                   @"scheme": [self ksSchemeOfProxy:p] }];
+            for (id p in all) {
+                @try {
+                    NSString *bid = [p bundleIdentifier];
+                    if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                    if ([bid hasPrefix:@"com.apple."]) continue;
+                    NSString *name = [p localizedName];
+                    if (![name isKindOfClass:[NSString class]] || name.length == 0) name = bid;
+                    UIImage *icon = nil;
+                    if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
+                        icon = [UIImage _applicationIconImageForBundleIdentifier:bid format:2];
+                    [list addObject:@{ @"bid": bid, @"name": name,
+                                       @"icon": icon ?: [NSNull null],
+                                       @"scheme": [self ksSchemeOfProxy:p] }];
+                } @catch (NSException *e) {
+                    [diag addObject:[NSString stringWithFormat:@"p异常:%@", e.name ?: @""]];
+                }
             }
         }
-        // 通道2：LSApplicationProxy +allApplications（另一入口，有的环境它通）
+        // 通道2：LSApplicationProxy +allApplications（16.6.1 实测 respondsToSelector=NO，保留兼容）
         if (list.count == 0) {
             Class proxyCls = NSClassFromString(@"LSApplicationProxy");
-            BOOL sel = proxyCls && [proxyCls respondsToSelector:@selector(allApplications)];
-            NSArray *proxies = sel ? [proxyCls performSelector:@selector(allApplications)] : nil;
-            [diag addObject:[NSString stringWithFormat:@"proxy:%lu", (unsigned long)proxies.count]];
-            for (LSApplicationProxy *p in proxies) {
-                NSString *bid = p.bundleIdentifier;
-                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-                if ([bid hasPrefix:@"com.apple."]) continue;
-                NSString *name = p.localizedName ?: bid;
-                [list addObject:@{ @"bid": bid, @"name": name,
-                                   @"icon": [NSNull null],
-                                   @"scheme": [self ksSchemeOfProxy:p] }];
+            BOOL ok = proxyCls && [proxyCls respondsToSelector:@selector(allApplications)];
+            [diag addObject:[NSString stringWithFormat:@"proxy:%@", ok ? @"可用" : @"不可用"]];
+            if (ok) {
+                NSArray *proxies = [(id)proxyCls allApplications];
+                for (id p in proxies) {
+                    @try {
+                        NSString *bid = [p bundleIdentifier];
+                        if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                        if ([bid hasPrefix:@"com.apple."]) continue;
+                        NSString *name = [p localizedName];
+                        if (![name isKindOfClass:[NSString class]] || name.length == 0) name = bid;
+                        [list addObject:@{ @"bid": bid, @"name": name,
+                                           @"icon": [NSNull null],
+                                           @"scheme": [self ksSchemeOfProxy:p] }];
+                    } @catch (NSException *e) {
+                        [diag addObject:[NSString stringWithFormat:@"p异常:%@", e.name ?: @""]];
+                    }
+                }
             }
         }
         // 通道3：扫盘
         if (list.count == 0) [list addObjectsFromArray:ksScanDiskApps(diag)];
     } @catch (NSException *e) {
-        [diag addObject:[NSString stringWithFormat:@"异常:%@", e.reason ?: @""]];
+        [diag addObject:[NSString stringWithFormat:@"异常:%@ %@", e.name ?: @"", e.reason ?: @""]];
     }
     [list sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"name"] compare:b[@"name"]];
@@ -679,6 +695,11 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
     _diag = [diag componentsJoinedByString:@" "];
     _selectedBid = KSPrefDict()[@"quickActionBundleId"];
     if (![_selectedBid isKindOfClass:[NSString class]]) _selectedBid = nil;
+    // 诊断落盘：列表为空时 frida 直读此文件即可定位，无需截图
+    NSString *line = [NSString stringWithFormat:@"%@ | %@ | 列表:%lu\n",
+                      [NSDate date], _diag ?: @"", (unsigned long)list.count];
+    [line writeToFile:@"/var/mobile/Library/Preferences/com.yzdmm.keyboardstatus.applist_diag.txt"
+           atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
@@ -686,11 +707,13 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"a" forIndexPath:ip];
+    // 不用 registerClass：默认样式没有 detailTextLabel（v1.2.2 诊断行因此显示不出来），改 Subtitle
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"a"];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"a"];
     if (_filtered.count == 0) {
-        c.textLabel.text = @"未获取到 App 列表（截图这行字给开发者）";
-        c.textLabel.numberOfLines = 0;
-        c.detailTextLabel.text = _diag ?: nil; // 各通道诊断结果
+        c.textLabel.text = @"未获取到 App 列表";
+        c.textLabel.numberOfLines = 1;
+        c.detailTextLabel.text = _diag ?: nil; // 各通道诊断结果（Subtitle 样式此时可见）
         c.detailTextLabel.numberOfLines = 0;
         c.detailTextLabel.font = [UIFont systemFontOfSize:11];
         c.detailTextLabel.textColor = [UIColor secondaryLabelColor];
