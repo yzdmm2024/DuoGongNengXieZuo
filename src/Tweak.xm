@@ -10,13 +10,46 @@ static NSInteger const KS_TOOLBAR_TAG = 9174;
 
 #pragma mark - 偏好（跨进程：设置面板与 tweak 共用 KS_SUITE）
 
+// Roothide 实测（2026-09-06 frida）：面板写入的偏好经 RootHide 重定向，落在
+// .jbroot-<UUID>/var/mobile/Library/Preferences/ 的文件里；而普通 App 进程的
+// CFPreferencesCopyAppValue 走 cfprefsd 默认容器视图，读不到这份文件 → 设置永不生效。
+// 解法：读直接落 jbroot 的 plist 文件，与面板写入落点物理一致，绕开 cfprefsd。
+static NSString *ksPrefsFilePath(void) {
+    static NSString *cached;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        @try {
+            NSString *leaf = @"var/mobile/Library/Preferences/com.yzdmm.keyboardstatus.plist";
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSString *p = [@"/var/jb" stringByAppendingPathComponent:leaf];
+            if ([fm fileExistsAtPath:p]) { cached = p; return; }
+            NSString *base = @"/private/var/containers/Bundle/Application";
+            for (NSString *it in [fm contentsOfDirectoryAtPath:base error:nil]) {
+                if ([it hasPrefix:@".jbroot-"]) {
+                    NSString *cand = [[base stringByAppendingPathComponent:it] stringByAppendingPathComponent:leaf];
+                    if ([fm fileExistsAtPath:cand]) { cached = cand; return; }
+                }
+            }
+        } @catch (NSException *e) {}
+    });
+    return cached;
+}
+
 static void KSSyncPrefs(void) {
-    @try { CFPreferencesAppSynchronize((__bridge CFStringRef)KS_SUITE); } @catch (NSException *e) {}
+    // 文件直读无需同步；保留空实现兼容旧调用点
 }
 
 static id KSCopyPref(NSString *key) {
-    return (__bridge_transfer id)CFPreferencesCopyAppValue(
-        (__bridge CFStringRef)key, (__bridge CFStringRef)KS_SUITE);
+    @try {
+        NSString *p = ksPrefsFilePath();
+        if (p) {
+            NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:p];
+            return d[key];
+        }
+        // 找不到 jbroot 文件时退回 CFPreferences（有 hook 的环境仍可用）
+        return (__bridge_transfer id)CFPreferencesCopyAppValue(
+            (__bridge CFStringRef)key, (__bridge CFStringRef)KS_SUITE);
+    } @catch (NSException *e) { return nil; }
 }
 
 static BOOL KSBool(NSString *key, BOOL def) {
@@ -41,6 +74,14 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 static void KSSetPref(NSString *key, id value) {
     @try {
+        NSString *p = ksPrefsFilePath();
+        if (p) {
+            // 直写 jbroot 文件（与面板/读侧一致）；失败再退回 CFPreferences
+            NSMutableDictionary *d = [[NSDictionary dictionaryWithContentsOfFile:p] mutableCopy]
+                                     ?: [NSMutableDictionary dictionary];
+            if (value) d[key] = value; else [d removeObjectForKey:key];
+            if ([d writeToFile:p atomically:YES]) return;
+        }
         CFPreferencesSetAppValue((__bridge CFStringRef)key,
                                  (__bridge CFPropertyListRef)value,
                                  (__bridge CFStringRef)KS_SUITE);

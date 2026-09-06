@@ -3,25 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>title</key>
-	<string>键盘下方状态 1.0.5</string>
+	<string>键盘下方状态 1.0.6</string>
 	<key>items</key>
 	<array>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>实时预览</string>
-			<key>footerText</key>
-			<string>下面就是键盘上工具栏的样子。开关/滑块改动立即反映；直接拖动工具条可调位置（左边=左右偏移，上拖=抬高），改完其他 App 的键盘立即跟随。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSCustomCell</string>
-			<key>cellClass</key>
-			<string>KSPreviewCell</string>
-			<key>height</key>
-			<real>185</real>
-		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -207,6 +191,22 @@
 			<string>说明</string>
 			<key>footerText</key>
 			<string>只注入普通 App 键盘，不碰主屏幕/设置/系统进程。默认位置为验证过的安全位（居中偏左、抬高35pt），挡到语音键就调"左右偏移"和"抬高"。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>实时预览</string>
+			<key>footerText</key>
+			<string>预览固定在页面底部（避免被软键盘遮挡），只渲染键盘底部工具栏，键盘主体保持固定。开关/滑块改动立即反映；直接拖动工具条可调位置（左右=偏移，上下=抬高），改完其他 App 的键盘立即跟随。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSCustomCell</string>
+			<key>cellClass</key>
+			<string>KSPreviewCell</string>
+			<key>height</key>
+			<real>185</real>
 		</dict>
 	</array>
 </dict>

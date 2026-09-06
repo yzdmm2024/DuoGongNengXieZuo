@@ -10,16 +10,65 @@
 - (void)setPreferenceValue:(id)value specifier:(id)specifier;
 @end
 
-#pragma mark - 偏好读写（与 Tweak.xm 同一 suite）
+#pragma mark - 偏好读写：直落 jbroot 文件（与 tweak 完全同款，绕开 cfprefsd）
 
-static id KSCopyPref(NSString *key) {
-    return (__bridge_transfer id)CFPreferencesCopyAppValue(
-        (__bridge CFStringRef)key, (__bridge CFStringRef)KS_SUITE);
+static NSString *ksPrefsFilePath(void) {
+    static NSString *cached;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        @try {
+            NSString *leaf = @"var/mobile/Library/Preferences/com.yzdmm.keyboardstatus.plist";
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSString *p = [@"/var/jb" stringByAppendingPathComponent:leaf];
+            if ([fm fileExistsAtPath:p]) { cached = p; return; }
+            NSString *base = @"/private/var/containers/Bundle/Application";
+            for (NSString *it in [fm contentsOfDirectoryAtPath:base error:nil]) {
+                if ([it hasPrefix:@".jbroot-"]) {
+                    NSString *cand = [[base stringByAppendingPathComponent:it] stringByAppendingPathComponent:leaf];
+                    if ([fm fileExistsAtPath:cand]) { cached = cand; return; }
+                }
+            }
+        } @catch (NSException *e) {}
+    });
+    return cached;
+}
+
+static NSDictionary *KSPrefDict(void) {
+    @try {
+        NSString *p = ksPrefsFilePath();
+        if (p) return [NSDictionary dictionaryWithContentsOfFile:p] ?: @{};
+    } @catch (NSException *e) {}
+    return @{};
+}
+
+static void KSPostChanged(void) {
+    @try {
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             CFSTR(KS_DARWIN_NOTI), NULL, NULL, TRUE);
+    } @catch (NSException *e) {}
+}
+
+static void KSWriteKey(NSString *key, id value) {
+    @try {
+        NSString *p = ksPrefsFilePath();
+        if (p) {
+            NSMutableDictionary *d = [[KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
+            if (value) d[key] = value; else [d removeObjectForKey:key];
+            if ([d writeToFile:p atomically:YES]) { KSPostChanged(); return; }
+        }
+        // 文件写失败退回 CFPreferences（面板进程 root，带 RootHide hook 时同样落 jbroot）
+        CFPreferencesSetAppValue((__bridge CFStringRef)key,
+                                 (__bridge CFPropertyListRef)value,
+                                 (__bridge CFStringRef)KS_SUITE);
+        CFPreferencesSynchronize((__bridge CFStringRef)KS_SUITE,
+                                 kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        KSPostChanged();
+    } @catch (NSException *e) {}
 }
 
 static BOOL KSBool(NSString *key, BOOL def) {
     @try {
-        id v = KSCopyPref(key);
+        id v = KSPrefDict()[key];
         if (v == nil) return def;
         if ([v isKindOfClass:[NSNumber class]]) return [v boolValue];
         if ([v isKindOfClass:[NSString class]]) return [(NSString *)v boolValue];
@@ -29,7 +78,7 @@ static BOOL KSBool(NSString *key, BOOL def) {
 
 static CGFloat KSFloat(NSString *key, CGFloat def) {
     @try {
-        id v = KSCopyPref(key);
+        id v = KSPrefDict()[key];
         if (v == nil) return def;
         if ([v isKindOfClass:[NSNumber class]]) return [v floatValue];
         if ([v isKindOfClass:[NSString class]]) return [(NSString *)v floatValue];
@@ -37,22 +86,8 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
     return def;
 }
 
-static void KSSetPref(NSString *key, id value) {
-    @try {
-        CFPreferencesSetAppValue((__bridge CFStringRef)key,
-                                 (__bridge CFPropertyListRef)value,
-                                 (__bridge CFStringRef)KS_SUITE);
-        CFPreferencesSynchronize((__bridge CFStringRef)KS_SUITE,
-                                 kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-        // 广播给 tweak（所有注入的 App 立即跟随）
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                             CFSTR(KS_DARWIN_NOTI), NULL, NULL, TRUE);
-    } @catch (NSException *e) {}
-}
+#pragma mark - 实时预览 cell：固定键盘主体 + 实时工具栏（可拖动调位置）
 
-#pragma mark - 实时预览 cell（模拟键盘 + 工具条，可拖动调位置）
-
-// 与 Tweak.xm 相同的按钮清单：(SF Symbol, 文字回退, 开关键)
 static NSString * const ksBtnOrder[] = {
     @"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
     @"showPhrases", @"showCursor", @"showDismiss"
@@ -69,16 +104,14 @@ static NSDictionary *ksBtnSpecs(void) {
     };
 }
 
-// PSCustomCell 的 cellClass 必须继承 PSTableCell：Preferences 创建 cell 后会调用
-// setSpecifier: 等 PSTableCell 方法，纯 UITableViewCell 会 unrecognized selector → 点面板闪退
+// PSCustomCell 的 cellClass 必须继承 PSTableCell（坑H：否则点面板闪退）
 @interface KSPreviewCell : PSTableCell
 @end
 
 @implementation KSPreviewCell {
     UIView        *_kbBg;     // 键盘模拟背景
-    UIView        *_spaceBar; // 空格条示意
-    UIImageView   *_globe;
-    UIImageView   *_mic;
+    NSMutableArray *_keyViews; // 固定按键（不随配置变）
+    CGFloat        _drawnW;    // 按键绘制时的宽度（变了才重画）
     UIStackView   *_bar;      // 工具条（实时渲染）
     NSLayoutConstraint *_cx, *_btm;
     NSTimer       *_timer;
@@ -91,6 +124,7 @@ static NSDictionary *ksBtnSpecs(void) {
     if (self) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = UIColor.clearColor;
+        _keyViews = [[NSMutableArray alloc] init];
         [self buildViews];
         [self refresh];
     }
@@ -106,8 +140,15 @@ static NSDictionary *ksBtnSpecs(void) {
 - (UIColor *)ksKbColor {
     return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
         return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
-            ? [UIColor colorWithRed:0.23 green:0.23 blue:0.25 alpha:1]
+            ? [UIColor colorWithRed:0.18 green:0.18 blue:0.20 alpha:1]
             : [UIColor colorWithRed:0.85 green:0.86 blue:0.87 alpha:1];
+    }];
+}
+
+- (UIColor *)ksKeyColor {
+    return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
+        return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
+            ? [UIColor colorWithRed:0.32 green:0.32 blue:0.34 alpha:1] : [UIColor whiteColor];
     }];
 }
 
@@ -126,48 +167,91 @@ static NSDictionary *ksBtnSpecs(void) {
             [_kbBg.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-14],
             [_kbBg.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-8],
         ]];
-
-        // 底部 dock 行示意：地球 + 空格 + 听写
-        _globe = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"globe"]];
-        _globe.tintColor = [UIColor secondaryLabelColor];
-        _globe.contentMode = UIViewContentModeScaleAspectFit;
-        _globe.translatesAutoresizingMaskIntoConstraints = NO;
-
-        _spaceBar = [[UIView alloc] init];
-        _spaceBar.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
-            return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
-                ? [UIColor colorWithWhite:0.36 alpha:1] : [UIColor whiteColor];
-        }];
-        _spaceBar.layer.cornerRadius = 4;
-        _spaceBar.translatesAutoresizingMaskIntoConstraints = NO;
-
-        _mic = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"mic.fill"]];
-        _mic.tintColor = [UIColor secondaryLabelColor];
-        _mic.contentMode = UIViewContentModeScaleAspectFit;
-        _mic.translatesAutoresizingMaskIntoConstraints = NO;
-
-        [_kbBg addSubview:_globe];
-        [_kbBg addSubview:_spaceBar];
-        [_kbBg addSubview:_mic];
-        [NSLayoutConstraint activateConstraints:@[
-            [_globe.leadingAnchor constraintEqualToAnchor:_kbBg.leadingAnchor constant:14],
-            [_globe.bottomAnchor constraintEqualToAnchor:_kbBg.bottomAnchor constant:-8],
-            [_globe.widthAnchor constraintEqualToConstant:22],
-            [_globe.heightAnchor constraintEqualToConstant:22],
-
-            [_mic.trailingAnchor constraintEqualToAnchor:_kbBg.trailingAnchor constant:-14],
-            [_mic.bottomAnchor constraintEqualToAnchor:_kbBg.bottomAnchor constant:-8],
-            [_mic.widthAnchor constraintEqualToConstant:22],
-            [_mic.heightAnchor constraintEqualToConstant:22],
-
-            [_spaceBar.centerYAnchor constraintEqualToAnchor:_globe.centerYAnchor],
-            [_spaceBar.leadingAnchor constraintEqualToAnchor:_globe.trailingAnchor constant:24],
-            [_spaceBar.trailingAnchor constraintEqualToAnchor:_mic.leadingAnchor constant:-24],
-            [_spaceBar.heightAnchor constraintEqualToConstant:30],
-        ]];
-
-        // 拖动手势挂在工具条上（rebuild 时重挂）
     } @catch (NSException *e) {}
+}
+
+// 固定键盘主体：4 行按键示意（QWERTY / ASDF / shift行 / dock行），不随配置变化
+- (void)ksDrawKeysIfNeeded {
+    @try {
+        CGFloat W = _kbBg.bounds.size.width, H = _kbBg.bounds.size.height;
+        if (W <= 10 || H <= 10) return;
+        if (_keyViews.count && fabs(W - _drawnW) < 1) return;
+        _drawnW = W;
+        for (UIView *v in _keyViews) [v removeFromSuperview];
+        [_keyViews removeAllObjects];
+
+        CGFloat rowH = 20, gap = 3, side = 8;
+        CGFloat blockH = rowH * 4 + gap * 3;
+        CGFloat y0 = H - blockH - 6; // 键区从底部往上
+
+        NSArray<NSArray *> *rows = @[
+            @[@10, @"Q,W,E,R,T,Y,U,I,O,P"],
+            @[@9,  @"A,S,D,F,G,H,J,K,L"],
+            @[@9,  @"⇧,Z,X,C,V,B,N,M,⌫"],
+        ];
+        CGFloat y = y0;
+        for (NSArray *row in rows) {
+            NSUInteger n = [row[0] unsignedIntegerValue];
+            NSArray *keys = [row[1] componentsSeparatedByString:@","];
+            CGFloat kw = (W - side * 2 - gap * (n - 1)) / n;
+            CGFloat x = side;
+            for (NSString *label in keys) {
+                UIView *k = [[UIView alloc] initWithFrame:CGRectMake(x, y, kw, rowH)];
+                k.backgroundColor = [self ksKeyColor];
+                k.layer.cornerRadius = 4;
+                UILabel *l = [[UILabel alloc] initWithFrame:k.bounds];
+                l.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                l.text = label;
+                l.font = [UIFont systemFontOfSize:10];
+                l.textAlignment = NSTextAlignmentCenter;
+                l.textColor = [UIColor secondaryLabelColor];
+                [k addSubview:l];
+                [_kbBg addSubview:k];
+                [_keyViews addObject:k];
+                x += kw + gap;
+            }
+            y += rowH + gap;
+        }
+        // 底部 dock 行：123 + 空格 + 发送
+        CGFloat dy = y;
+        CGFloat dw1 = (W - side * 2 - gap * 2) * 0.22;
+        CGFloat dw2 = (W - side * 2 - gap * 2) * 0.50;
+        CGFloat dw3 = (W - side * 2 - gap * 2) * 0.28;
+        NSArray *dockSpec = @[
+            @[[NSValue valueWithCGRect:CGRectMake(side, dy, dw1, rowH)], @"123"],
+            @[[NSValue valueWithCGRect:CGRectMake(side + dw1 + gap, dy, dw2, rowH)], @""],
+            @[[NSValue valueWithCGRect:CGRectMake(side + dw1 + gap * 2 + dw2, dy, dw3, rowH)], @"发送"],
+        ];
+        for (NSArray *spec in dockSpec) {
+            CGRect f = [[spec objectAtIndex:0] CGRectValue];
+            NSString *label = [spec objectAtIndex:1];
+            UIView *k = [[UIView alloc] initWithFrame:f];
+            BOOL isSend = [label isEqualToString:@"发送"];
+            k.backgroundColor = label.length == 0
+                ? [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
+                    return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
+                        ? [UIColor colorWithWhite:0.45 alpha:1] : [UIColor whiteColor];
+                  }]
+                : (isSend ? [UIColor systemGray3Color] : [UIColor systemGray4Color]);
+            k.layer.cornerRadius = 4;
+            if (label.length) {
+                UILabel *l = [[UILabel alloc] initWithFrame:k.bounds];
+                l.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                l.text = label;
+                l.font = [UIFont systemFontOfSize:10];
+                l.textAlignment = NSTextAlignmentCenter;
+                l.textColor = [UIColor secondaryLabelColor];
+                [k addSubview:l];
+            }
+            [_kbBg addSubview:k];
+            [_keyViews addObject:k];
+        }
+    } @catch (NSException *e) {}
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self ksDrawKeysIfNeeded];
 }
 
 - (UIButton *)ksMakeBtn:(NSString *)sf fallback:(NSString *)fb {
@@ -211,17 +295,18 @@ static NSDictionary *ksBtnSpecs(void) {
         NSDictionary *specs = ksBtnSpecs();
         for (NSUInteger i = 0; i < sizeof(ksBtnOrder)/sizeof(ksBtnOrder[0]); i++) {
             NSString *k = ksBtnOrder[i];
-            if (![k isEqualToString:@"showCursor"] && !KSBool(k, YES)) continue;
-            if ([k isEqualToString:@"showCursor"] && !KSBool(@"showCursor", YES)) continue;
-            NSArray *sf_fb = specs[k];
-            UIButton *b;
             if ([k isEqualToString:@"showCursor"]) {
-                b = [self ksMakeBtn:@"arrow.left" fallback:@"←"];
+                if (!KSBool(@"showCursor", YES)) continue;
+                UIButton *b = [self ksMakeBtn:@"arrow.left" fallback:@"←"];
                 if (b) [_bar addArrangedSubview:b];
+                NSArray *sf_fb = specs[k];
                 b = [self ksMakeBtn:sf_fb[0] fallback:sf_fb[1]];
-            } else {
-                b = [self ksMakeBtn:sf_fb[0] fallback:sf_fb[1]];
+                if (b) [_bar addArrangedSubview:b];
+                continue;
             }
+            if (!KSBool(k, YES)) continue;
+            NSArray *sf_fb = specs[k];
+            UIButton *b = [self ksMakeBtn:sf_fb[0] fallback:sf_fb[1]];
             if (b) [_bar addArrangedSubview:b];
         }
 
@@ -249,16 +334,16 @@ static NSDictionary *ksBtnSpecs(void) {
         CGFloat lift = KSFloat(@"toolbarLift", 35) - t.y; // 往上拖 = 抬高增大
         offX = MIN(120, MAX(-120, offX));
         lift = MIN(120, MAX(0, lift));
-        KSSetPref(@"toolbarX", @(offX));
-        KSSetPref(@"toolbarLift", @(lift));
-        [self refresh]; // 立即反映 + 已广播给 tweak 实时跟随
+        KSWriteKey(@"toolbarX", @(offX));
+        KSWriteKey(@"toolbarLift", @(lift));
+        [self refresh]; // 立即反映（KSWriteKey 内已广播给 tweak）
     } @catch (NSException *e) {}
 }
 
 - (void)refresh {
     @try {
         CGFloat iconSize = KSFloat(@"iconSize", 15);
-        // 签名含 iconSize + 每个开关独立一位（错位编码，任何一项变化都触发重建）
+        // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
         NSString *sig = [NSString stringWithFormat:@"%.1f|%d%d%d%d%d%d%d%d",
             iconSize,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
@@ -278,7 +363,7 @@ static NSDictionary *ksBtnSpecs(void) {
     } @catch (NSException *e) {}
 }
 
-// 定时器轮询（0.25s）：开关/滑块的值变化自动反映到预览；页面退出时停掉
+// 定时器轮询（0.25s）：开关/滑块改动自动反映到预览；页面退出时停掉
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     @try {
@@ -312,12 +397,22 @@ static NSDictionary *ksBtnSpecs(void) {
 }
 
 // 每次开关/滑块改值都会走到这里（PSSwitchCell/PSSliderCell 的标准写入链路）
-// → super 写入 suite → 广播 darwin 通知 → tweak 实时刷新（无需收起键盘）
+// → super 写 cfprefsd（RootHide 环境落 jbroot）→ 再直写文件双保险 → 广播 darwin 通知
 - (void)setPreferenceValue:(id)value specifier:(id)specifier {
     @try {
         [super setPreferenceValue:value specifier:specifier];
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                             CFSTR(KS_DARWIN_NOTI), NULL, NULL, TRUE);
+        if ([specifier respondsToSelector:@selector(propertyForKey:)]) {
+            NSString *key = [specifier propertyForKey:@"key"];
+            if ([key isKindOfClass:[NSString class]] && key.length) {
+                NSString *p = ksPrefsFilePath();
+                if (p) {
+                    NSMutableDictionary *d = [[KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
+                    if (value) d[key] = value;
+                    [d writeToFile:p atomically:YES]; // 与 super 写的值一致，谁后写都无冲突
+                }
+            }
+        }
+        KSPostChanged();
     } @catch (NSException *e) {}
 }
 
