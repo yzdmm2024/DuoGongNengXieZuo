@@ -391,52 +391,7 @@ static NSDictionary *ksBtnSpecs(void) {
 
 @end
 
-#pragma mark - 子菜单入口 cell（点击 push 子页面）
-
-@class KSOrderViewController;
-@class KSAppPickerViewController;
-
-@interface KSMenuCell : PSTableCell
-@end
-
-@implementation KSMenuCell {
-    PSSpecifier *_spec;
-}
-
-- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
-    self = [super initWithStyle:style reuseIdentifier:rid];
-    if (self) {
-        self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(ksOpen)];
-        [self addGestureRecognizer:tap];
-    }
-    return self;
-}
-
-- (void)setSpecifier:(PSSpecifier *)spec {
-    [super setSpecifier:spec];
-    _spec = spec;
-}
-
-- (UIViewController *)ksOwningVC {
-    UIResponder *r = self.nextResponder;
-    while (r && ![r isKindOfClass:[UIViewController class]]) r = r.nextResponder;
-    return (UIViewController *)r;
-}
-
-- (void)ksOpen {
-    @try {
-        NSString *menu = [_spec propertyForKey:@"menu"];
-        UIViewController *owner = [self ksOwningVC];
-        if (!owner.navigationController) return;
-        UIViewController *target = nil;
-        if ([menu isEqualToString:@"order"]) target = [[KSOrderViewController alloc] init];
-        else if ([menu isEqualToString:@"apppicker"]) target = [[KSAppPickerViewController alloc] init];
-        if (target) [owner.navigationController pushViewController:target animated:YES];
-    } @catch (NSException *e) {}
-}
-
-@end
+#pragma mark - 子菜单入口 cell（点击 push 子页面；实现放文件尾，因引用其后的子页面类）
 
 #pragma mark - 按钮排序页（拖动上下 = 键盘从左到右，即拖即存即生效）
 
@@ -567,7 +522,7 @@ static NSDictionary *ksBtnSpecs(void) {
             if ([types isKindOfClass:[NSArray class]]) {
                 for (NSDictionary *t in types) {
                     id names = [t objectForKey:@"CFBundleURLSchemes"];
-                    if ([names isKindOfClass:[NSArray class]] && names.count) {
+                    if ([names isKindOfClass:[NSArray class]] && [names count] > 0) {
                         NSString *s = [names firstObject];
                         if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
                     }
@@ -617,6 +572,50 @@ static NSDictionary *ksBtnSpecs(void) {
                    dispatch_get_main_queue(), ^{
         [self.navigationController popViewControllerAnimated:YES];
     });
+}
+
+@end
+
+#pragma mark - 子菜单入口 cell（实现置尾：alloc 的两个子页面类已在上方完整定义）
+
+@interface KSMenuCell : PSTableCell
+@end
+
+@implementation KSMenuCell {
+    PSSpecifier *_spec;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
+    self = [super initWithStyle:style reuseIdentifier:rid];
+    if (self) {
+        self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(ksOpen)];
+        [self addGestureRecognizer:tap];
+    }
+    return self;
+}
+
+- (void)setSpecifier:(PSSpecifier *)spec {
+    [super setSpecifier:spec];
+    _spec = spec;
+}
+
+- (UIViewController *)ksOwningVC {
+    UIResponder *r = self.nextResponder;
+    while (r && ![r isKindOfClass:[UIViewController class]]) r = r.nextResponder;
+    return (UIViewController *)r;
+}
+
+- (void)ksOpen {
+    @try {
+        NSString *menu = [_spec propertyForKey:@"menu"];
+        UIViewController *owner = [self ksOwningVC];
+        if (!owner.navigationController) return;
+        UIViewController *target = nil;
+        if ([menu isEqualToString:@"order"]) target = [[KSOrderViewController alloc] init];
+        else if ([menu isEqualToString:@"apppicker"]) target = [[KSAppPickerViewController alloc] init];
+        if (target) [owner.navigationController pushViewController:target animated:YES];
+    } @catch (NSException *e) {}
 }
 
 @end
