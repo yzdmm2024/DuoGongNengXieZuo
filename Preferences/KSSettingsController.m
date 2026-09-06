@@ -90,17 +90,18 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 static NSString * const ksBtnOrder[] = {
     @"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-    @"showPhrases", @"showCursor", @"showDismiss"
+    @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction"
 };
 static NSDictionary *ksBtnSpecs(void) {
     return @{
-        @"showSelectAll": @[@"selection.pin.in.out", @"全"],
-        @"showCut":       @[@"scissors", @"剪"],
-        @"showPaste":     @[@"doc.on.clipboard", @"粘"],
-        @"showClipboard": @[@"list.clipboard", @"历"],
-        @"showPhrases":   @[@"text.quote", @"语"],
-        @"showCursor":    @[@"arrow.right", @"→"],
-        @"showDismiss":   @[@"keyboard.chevron.compact.down", @"收"],
+        @"showSelectAll":  @[@"selection.pin.in.out", @"全"],
+        @"showCut":        @[@"scissors", @"剪"],
+        @"showPaste":      @[@"doc.on.clipboard", @"粘"],
+        @"showClipboard":  @[@"list.clipboard", @"历"],
+        @"showPhrases":    @[@"text.quote", @"语"],
+        @"showCursor":     @[@"arrow.right", @"→"],
+        @"showDismiss":    @[@"keyboard.chevron.compact.down", @"收"],
+        @"showQuickAction":@[@"rectangle.stack", @"切"],
     };
 }
 
@@ -284,19 +285,23 @@ static NSDictionary *ksBtnSpecs(void) {
         _bar.alignment = UIStackViewAlignmentCenter;
         _bar.spacing = 4;
         _bar.translatesAutoresizingMaskIntoConstraints = NO;
-        _bar.layer.cornerRadius = 8;
-        _bar.layer.masksToBounds = YES;
-        _bar.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
-            return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
-                ? [UIColor colorWithWhite:0.15 alpha:0.85] : [UIColor colorWithWhite:1.0 alpha:0.85];
-        }];
+        // 与真实工具栏一致：无独立底色，图标直接浮在键盘背景上
         [_kbBg addSubview:_bar];
+
+        // 与 tweak 同款竖线分隔符（剪贴板历史/光标/收起/快捷启动前各一条）
+        UIView *__sep;
+#define KSPREV_SEP() do { \
+            __sep = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 1, 20)]; \
+            __sep.backgroundColor = [UIColor systemGray4Color]; \
+            [_bar addArrangedSubview:__sep]; \
+        } while(0)
 
         NSDictionary *specs = ksBtnSpecs();
         for (NSUInteger i = 0; i < sizeof(ksBtnOrder)/sizeof(ksBtnOrder[0]); i++) {
             NSString *k = ksBtnOrder[i];
             if ([k isEqualToString:@"showCursor"]) {
                 if (!KSBool(@"showCursor", YES)) continue;
+                KSPREV_SEP();
                 UIButton *b = [self ksMakeBtn:@"arrow.left" fallback:@"←"];
                 if (b) [_bar addArrangedSubview:b];
                 NSArray *sf_fb = specs[k];
@@ -304,7 +309,12 @@ static NSDictionary *ksBtnSpecs(void) {
                 if (b) [_bar addArrangedSubview:b];
                 continue;
             }
-            if (!KSBool(k, YES)) continue;
+            BOOL def = [k isEqualToString:@"showQuickAction"] ? NO : YES;
+            if (!KSBool(k, def)) continue;
+            if ([k isEqualToString:@"showClipboard"] || [k isEqualToString:@"showDismiss"]
+                || [k isEqualToString:@"showQuickAction"]) {
+                KSPREV_SEP();
+            }
             NSArray *sf_fb = specs[k];
             UIButton *b = [self ksMakeBtn:sf_fb[0] fallback:sf_fb[1]];
             if (b) [_bar addArrangedSubview:b];
@@ -344,7 +354,7 @@ static NSDictionary *ksBtnSpecs(void) {
     @try {
         CGFloat iconSize = KSFloat(@"iconSize", 15);
         // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%d%d%d%d%d%d%d%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%d%d%d%d%d%d%d%d%d",
             iconSize,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
             KSBool(@"showSelectAll", YES) ? 1 : 0,
@@ -353,7 +363,8 @@ static NSDictionary *ksBtnSpecs(void) {
             KSBool(@"showClipboard", YES) ? 1 : 0,
             KSBool(@"showPhrases", YES) ? 1 : 0,
             KSBool(@"showCursor", YES) ? 1 : 0,
-            KSBool(@"showDismiss", YES) ? 1 : 0];
+            KSBool(@"showDismiss", YES) ? 1 : 0,
+            KSBool(@"showQuickAction", NO) ? 1 : 0];
         if (![sig isEqualToString:_builtSig]) {
             _builtSig = sig;
             [self rebuildBar];

@@ -339,6 +339,18 @@ static void ksActCursorRight(id s, SEL _c) {
 }
 static void ksActClipboard(id s, SEL _c) { ksShowClipboardHistory(s); }
 static void ksActPhrases(id s, SEL _c)  { ksShowQuickPhrases(s); }
+// 快捷启动：读 quickActionURL 直跳（任意 App 的 URL Scheme / App-prefs 系统设置页）
+// 控制中心、后台切换是 SpringBoard 级手势，App 内无法拉起，故用 URL 跳转代替
+static void ksActQuickLaunch(id s, SEL _c) {
+    @try {
+        NSString *urlStr = KSCopyPref(@"quickActionURL");
+        if (![urlStr isKindOfClass:[NSString class]] || urlStr.length == 0) return;
+        NSURL *u = [NSURL URLWithString:urlStr];
+        if (!u) return;
+        [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+    } @catch (NSException *e) {}
+}
+
 static void ksActDismiss(id s, SEL _c) {
     @try {
         [[UIApplication sharedApplication] sendAction:@selector(resignFirstResponder)
@@ -375,11 +387,11 @@ static char kKSBtmKey;
 
         // 重建签名：图标大小 + 全部功能开关，任一变化都重建整个工具栏
         //（旧版只有 iconSize 变了才重建，导致「关掉某功能按钮还在」）
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%d|%d|%d|%d|%d|%d|%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%d|%d|%d|%d|%d|%d|%d|%d",
             iconSize,
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
-            KSBool(@"showDismiss", YES)];
+            KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO)];
         UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
         if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
@@ -409,6 +421,8 @@ static char kKSBtmKey;
                                                  b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), self, iconSize); if (b) [stack addArrangedSubview:b]; }
             if (KSBool(@"showDismiss", YES))   { [stack addArrangedSubview:ksSeparator()];
                                                  b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            if (KSBool(@"showQuickAction", NO)){ [stack addArrangedSubview:ksSeparator()];
+                                                 b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b]; }
 
             NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor constant:offX];
             NSLayoutConstraint *btm = [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-lift];
@@ -474,6 +488,7 @@ static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
             {"ksActClipboard",  (IMP)ksActClipboard},
             {"ksActPhrases",    (IMP)ksActPhrases},
             {"ksActDismiss",    (IMP)ksActDismiss},
+            {"ksActQuickLaunch",(IMP)ksActQuickLaunch},
         };
         for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
             SEL sel = sel_registerName(methods[i].name);
