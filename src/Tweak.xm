@@ -1,15 +1,16 @@
 #import <UIKit/UIKit.h>
-#import <ifaddrs.h>
-#import <arpa/inet.h>
-#import <net/if.h>
+#import <objc/runtime.h>
 
 #pragma mark - 配置
 
 static NSString *const KS_SUITE = @"com.yzdmm.keyboardstatus";
-static NSInteger const KS_STATUS_TAG = 9173;
 static NSInteger const KS_TOOLBAR_TAG = 9174;
 
 #pragma mark - 偏好（跨进程：设置面板与 tweak 共用 KS_SUITE）
+
+static void KSSyncPrefs(void) {
+    @try { CFPreferencesAppSynchronize((__bridge CFStringRef)KS_SUITE); } @catch (NSException *e) {}
+}
 
 static id KSCopyPref(NSString *key) {
     return (__bridge_transfer id)CFPreferencesCopyAppValue(
@@ -26,6 +27,16 @@ static BOOL KSBool(NSString *key, BOOL def) {
     return def;
 }
 
+static CGFloat KSFloat(NSString *key, CGFloat def) {
+    @try {
+        id v = KSCopyPref(key);
+        if (v == nil) return def;
+        if ([v isKindOfClass:[NSNumber class]]) return [v floatValue];
+        if ([v isKindOfClass:[NSString class]]) return [(NSString *)v floatValue];
+    } @catch (NSException *e) {}
+    return def;
+}
+
 static void KSSetPref(NSString *key, id value) {
     @try {
         CFPreferencesSetAppValue((__bridge CFStringRef)key,
@@ -34,82 +45,6 @@ static void KSSetPref(NSString *key, id value) {
         CFPreferencesSynchronize((__bridge CFStringRef)KS_SUITE,
                                  kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     } @catch (NSException *e) {}
-}
-
-#pragma mark - 网络类型（标准 BSD，无额外框架依赖）
-
-static NSString *KSNetworkType(void) {
-    @try {
-        struct ifaddrs *ifs = NULL;
-        if (getifaddrs(&ifs) != 0) return @"无网络";
-        BOOL wifi = NO, cell = NO;
-        for (struct ifaddrs *ifa = ifs; ifa; ifa = ifa->ifa_next) {
-            if (ifa->ifa_addr == NULL) continue;
-            int fam = ifa->ifa_addr->sa_family;
-            if (fam == AF_INET || fam == AF_INET6) {
-                NSString *name = [NSString stringWithUTF8String:ifa->ifa_name];
-                if ([name isEqualToString:@"en0"]) wifi = YES;
-                else if ([name hasPrefix:@"pdp_ip"]) cell = YES;
-            }
-        }
-        freeifaddrs(ifs);
-        if (wifi) return @"WiFi";
-        if (cell) return @"蜂窝";
-        return @"无网络";
-    } @catch (NSException *e) {}
-    return @"无网络";
-}
-
-#pragma mark - 状态条文本（可选，纯显示）
-
-static NSString *KSBuildStatus(void) {
-    NSMutableArray *parts = [NSMutableArray array];
-    @try {
-        if (KSBool(@"showClock", YES)) {
-            NSDateFormatter *f = [[NSDateFormatter alloc] init];
-            f.dateFormat = @"HH:mm:ss";
-            [parts addObject:[NSString stringWithFormat:@"🕐 %@", [f stringFromDate:[NSDate date]]]];
-        }
-        if (KSBool(@"showBattery", YES)) {
-            UIDevice *dev = [UIDevice currentDevice];
-            dev.batteryMonitoringEnabled = YES;
-            NSInteger pct = (NSInteger)(dev.batteryLevel * 100.0);
-            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-            NSString *mark = (dev.batteryState == UIDeviceBatteryStateCharging ||
-                              dev.batteryState == UIDeviceBatteryStateFull) ? @"⚡" : @"";
-            [parts addObject:[NSString stringWithFormat:@"🔋 %ld%%%@", (long)pct, mark]];
-        }
-        if (KSBool(@"showClipboardStatus", YES)) {
-            NSString *c = [UIPasteboard generalPasteboard].string;
-            if (c.length == 0) c = @"空";
-            else if (c.length > 8) c = [[c substringToIndex:8] stringByAppendingString:@"…"];
-            [parts addObject:[NSString stringWithFormat:@"📋 %@", c]];
-        }
-        if (KSBool(@"showNetwork", YES)) {
-            [parts addObject:[NSString stringWithFormat:@"📶 %@", KSNetworkType()]];
-        }
-    } @catch (NSException *e) {}
-    return [parts componentsJoinedByString:@"   "];
-}
-
-static __weak UILabel *KSStatusLabel = nil;
-
-static void KSSetupStatusTimer(void) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t){
-            UILabel *label = KSStatusLabel;
-            if (label == nil) return;
-            if (!KSBool(@"enabled", YES) || !KSBool(@"showStatus", YES)) {
-                [label removeFromSuperview];
-                KSStatusLabel = nil;
-                return;
-            }
-            if (label.superview == nil) { KSStatusLabel = nil; return; }
-            @try { label.text = KSBuildStatus(); } @catch (NSException *e) {}
-        }];
-        [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
-    });
 }
 
 #pragma mark - 剪贴板历史（内存缓存，进程内有效）
@@ -190,9 +125,9 @@ static UIViewController *ksTopViewController(void) {
     } @catch (NSException *e) { return nil; }
 }
 
-static UIButton *ksMakeButton(NSString *sf, NSString *fallback, SEL action, id target) {
+static UIButton *ksMakeButton(NSString *sf, NSString *fallback, SEL action, id target, CGFloat iconSize) {
     @try {
-        UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:15
+        UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:iconSize
                                                                                         weight:UIImageSymbolWeightRegular];
         UIImage *img = [UIImage systemImageNamed:sf withConfiguration:cfg];
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -359,11 +294,8 @@ static void ksActClipboard(id s, SEL _c) { ksShowClipboardHistory(s); }
 static void ksActPhrases(id s, SEL _c)  { ksShowQuickPhrases(s); }
 static void ksActDismiss(id s, SEL _c) {
     @try {
-        // 用公开 API 让当前第一响应者（输入框）放弃焦点，从而收起键盘，避免调用私有类 UIKeyboardImpl
         [[UIApplication sharedApplication] sendAction:@selector(resignFirstResponder)
-                                                    to:nil
-                                                  from:nil
-                                              forEvent:nil];
+                                                    to:nil from:nil forEvent:nil];
     } @catch (NSException *e) {}
 }
 
@@ -372,78 +304,73 @@ static void ksActDismiss(id s, SEL _c) {
 @interface UIKeyboardDockView : UIView
 @end
 
+// 工具栏构建尺寸 / 位置约束，用关联对象挂在 stack 上（每个 dock 实例独立）
+static char kKSBuiltSizeKey;
+static char kKSCXKey;
+static char kKSBtmKey;
+
 %hook UIKeyboardDockView
 
 - (void)layoutSubviews {
     %orig;
     @try {
-        if (!KSBool(@"enabled", YES)) {
-            UIView *oldS = [self viewWithTag:KS_STATUS_TAG];  if (oldS) [oldS removeFromSuperview];
-            UIView *oldT = [self viewWithTag:KS_TOOLBAR_TAG]; if (oldT) [oldT removeFromSuperview];
-            KSStatusLabel = nil;
+        KSSyncPrefs();  // 拿到设置里最新值（滑块改完，收起再拉起键盘即生效）
+
+        if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
+            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
+            if (old) [old removeFromSuperview];
             return;
         }
 
-        // ---- 状态条（可选）----
-        if (KSBool(@"showStatus", YES)) {
-            UILabel *existing = (UILabel *)[self viewWithTag:KS_STATUS_TAG];
-            if (!existing) {
-                UILabel *l = [[UILabel alloc] init];
-                l.tag = KS_STATUS_TAG;
-                l.userInteractionEnabled = NO;
-                l.backgroundColor = [UIColor secondarySystemBackgroundColor];
-                l.textColor = [UIColor secondaryLabelColor];
-                l.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightRegular];
-                l.textAlignment = NSTextAlignmentCenter;
-                l.lineBreakMode = NSLineBreakByTruncatingTail;
-                l.translatesAutoresizingMaskIntoConstraints = NO;
-                [self addSubview:l];
-                [NSLayoutConstraint activateConstraints:@[
-                    [l.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
-                    [l.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
-                    [l.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-1],
-                    [l.heightAnchor constraintEqualToConstant:18]
-                ]];
-                l.text = KSBuildStatus();
-                KSStatusLabel = l;
-                KSSetupStatusTimer();
-            } else { KSStatusLabel = (UILabel *)existing; }
+        CGFloat iconSize = KSFloat(@"iconSize", 15);
+        CGFloat offX     = KSFloat(@"toolbarX", -25);   // centerX 偏移（负=往左）
+        CGFloat lift     = KSFloat(@"toolbarLift", 35); // 底部抬高量（避开 dock 行与语音键）
+
+        UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
+
+        // 图标尺寸变了（或首次）→ 重建按钮
+        NSNumber *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
+        if (stack && (!built || [built floatValue] != iconSize)) {
+            [stack removeFromSuperview];
+            stack = nil;
+        }
+
+        if (!stack) {
+            stack = [[UIStackView alloc] init];
+            stack.tag = KS_TOOLBAR_TAG;
+            stack.axis = UILayoutConstraintAxisHorizontal;
+            stack.distribution = UIStackViewDistributionEqualSpacing;
+            stack.alignment = UIStackViewAlignmentCenter;
+            stack.spacing = 4;
+            stack.translatesAutoresizingMaskIntoConstraints = NO;
+            [self addSubview:stack];
+
+            UIButton *b;
+            if (KSBool(@"showSelectAll", YES)) { b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            if (KSBool(@"showCut", YES))       { b = ksMakeButton(@"scissors",           @"剪", @selector(ksActCut),       self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            if (KSBool(@"showPaste", YES))     { b = ksMakeButton(@"doc.on.clipboard",   @"粘", @selector(ksActPaste),     self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            if (KSBool(@"showClipboard", YES)) { [stack addArrangedSubview:ksSeparator()];
+                                                 b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            if (KSBool(@"showPhrases", YES))   { b = ksMakeButton(@"text.quote",     @"语", @selector(ksActPhrases),  self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            if (KSBool(@"showCursor", YES))    { [stack addArrangedSubview:ksSeparator()];
+                                                 b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  self, iconSize); if (b) [stack addArrangedSubview:b];
+                                                 b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), self, iconSize); if (b) [stack addArrangedSubview:b]; }
+            if (KSBool(@"showDismiss", YES))   { [stack addArrangedSubview:ksSeparator()];
+                                                 b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b]; }
+
+            NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor constant:offX];
+            NSLayoutConstraint *btm = [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-lift];
+            cx.active = YES; btm.active = YES;
+            objc_setAssociatedObject(stack, &kKSBuiltSizeKey, @(iconSize), OBJC_ASSOCIATION_RETAIN);
+            objc_setAssociatedObject(stack, &kKSCXKey,  cx,  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(stack, &kKSBtmKey, btm, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         } else {
-            UIView *old = [self viewWithTag:KS_STATUS_TAG]; if (old) [old removeFromSuperview];
-            KSStatusLabel = nil;
+            // 已存在：只更新位置参数（实时跟随面板调整）
+            NSLayoutConstraint *cx  = objc_getAssociatedObject(stack, &kKSCXKey);
+            NSLayoutConstraint *btm = objc_getAssociatedObject(stack, &kKSBtmKey);
+            cx.constant  = offX;
+            btm.constant = -lift;
         }
-
-        // ---- 功能按钮栏（可选）----
-        if (!KSBool(@"toolbarEnabled", YES)) {
-            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG]; if (old) [old removeFromSuperview];
-            return;
-        }
-        if ([self viewWithTag:KS_TOOLBAR_TAG]) return; // 已添加
-
-        UIStackView *stack = [[UIStackView alloc] init];
-        stack.tag = KS_TOOLBAR_TAG;
-        stack.axis = UILayoutConstraintAxisHorizontal;
-        stack.distribution = UIStackViewDistributionEqualSpacing;
-        stack.alignment = UIStackViewAlignmentCenter;
-        stack.spacing = 4;
-        stack.translatesAutoresizingMaskIntoConstraints = NO;
-        [self addSubview:stack];
-        [stack.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:8].active = YES;
-        [stack.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-8].active = YES;
-        [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-22].active = YES;
-
-        UIButton *b;
-        if (KSBool(@"showSelectAll", YES)) { b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), self); if (b) [stack addArrangedSubview:b]; }
-        if (KSBool(@"showCut", YES))       { b = ksMakeButton(@"scissors",           @"剪", @selector(ksActCut),       self); if (b) [stack addArrangedSubview:b]; }
-        if (KSBool(@"showPaste", YES))     { b = ksMakeButton(@"doc.on.clipboard",   @"粘", @selector(ksActPaste),     self); if (b) [stack addArrangedSubview:b]; }
-        if (KSBool(@"showClipboard", YES)) { [stack addArrangedSubview:ksSeparator()];
-                                            b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), self); if (b) [stack addArrangedSubview:b]; }
-        if (KSBool(@"showPhrases", YES))   { b = ksMakeButton(@"text.quote",     @"语", @selector(ksActPhrases),  self); if (b) [stack addArrangedSubview:b]; }
-        if (KSBool(@"showCursor", YES))    { [stack addArrangedSubview:ksSeparator()];
-                                            b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  self); if (b) [stack addArrangedSubview:b];
-                                            b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), self); if (b) [stack addArrangedSubview:b]; }
-        if (KSBool(@"showDismiss", YES))   { [stack addArrangedSubview:ksSeparator()];
-                                            b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self); if (b) [stack addArrangedSubview:b]; }
     } @catch (NSException *e) {}
 }
 

@@ -3,7 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
+	<string>Chinese</string>
+	<key>CFBundleDisplayName</key>
+	<string>键盘下方状态</string>
 	<key>CFBundleExecutable</key>
 	<string>KeyboardStatusPrefs</string>
 	<key>CFBundleIdentifier</key>
@@ -15,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.0.1</string>
 	<key>CFBundleVersion</key>
-	<string>1.0.0</string>
+	<string>1.0.1</string>
 	<key>NSPrincipalClass</key>
 	<string>KSSettingsController</string>
 </dict>

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>title</key>
-	<string>键盘下方状态</string>
+	<string>键盘下方状态 1.0.1</string>
 	<key>items</key>
 	<array>
 		<dict>
@@ -15,193 +15,182 @@
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>enabled</string>
 			<key>label</key>
 			<string>启用插件</string>
-			<key>default</key>
-			<true/>
 		</dict>
-
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>功能按钮（键盘底栏）</string>
+			<string>工具栏开关</string>
+			<key>footerText</key>
+			<string>关掉某项后，收起再拉起键盘即生效。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>toolbarEnabled</string>
 			<key>label</key>
-			<string>显示功能按钮</string>
-			<key>default</key>
-			<true/>
+			<string>显示工具栏</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>showSelectAll</string>
 			<key>label</key>
 			<string>全选</string>
-			<key>default</key>
-			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>showCut</string>
 			<key>label</key>
 			<string>剪切</string>
-			<key>default</key>
-			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>showPaste</string>
 			<key>label</key>
 			<string>粘贴</string>
-			<key>default</key>
-			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.yzdmm.keyboardstatus</string>
-			<key>key</key>
-			<string>showCursor</string>
-			<key>label</key>
-			<string>光标左右移动</string>
 			<key>default</key>
 			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>showClipboard</string>
 			<key>label</key>
 			<string>剪贴板历史</string>
-			<key>default</key>
-			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>showPhrases</string>
 			<key>label</key>
 			<string>快捷短语</string>
-			<key>default</key>
-			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>showCursor</string>
+			<key>label</key>
+			<string>光标左右移</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>showDismiss</string>
 			<key>label</key>
 			<string>收起键盘</string>
-			<key>default</key>
-			<true/>
 		</dict>
-
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>状态条（可选，纯显示）</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.yzdmm.keyboardstatus</string>
-			<key>key</key>
-			<string>showStatus</string>
-			<key>label</key>
-			<string>显示状态条</string>
-			<key>default</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.yzdmm.keyboardstatus</string>
-			<key>key</key>
-			<string>showClock</string>
-			<key>label</key>
-			<string>状态条-时间</string>
-			<key>default</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.yzdmm.keyboardstatus</string>
-			<key>key</key>
-			<string>showBattery</string>
-			<key>label</key>
-			<string>状态条-电量</string>
-			<key>default</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.yzdmm.keyboardstatus</string>
-			<key>key</key>
-			<string>showClipboardStatus</string>
-			<key>label</key>
-			<string>状态条-剪贴板</string>
-			<key>default</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.yzdmm.keyboardstatus</string>
-			<key>key</key>
-			<string>showNetwork</string>
-			<key>label</key>
-			<string>状态条-网络</string>
-			<key>default</key>
-			<true/>
-		</dict>
-
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>关于</string>
+			<string>位置与大小</string>
 			<key>footerText</key>
-			<string>键盘底栏加一排功能按钮（全选/剪切/粘贴/光标移动/剪贴板历史/快捷短语/收起键盘）+ 可选状态条。仅注入普通 App，不注入主屏幕与设置，任何功能都可在上面单独关掉；出问题时关总开关即恢复原生键盘。</string>
+			<string>调完滑块后，收起再拉起键盘即可看到效果。左右偏移负数往左；抬高越大工具栏越靠上。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>toolbarX</string>
+			<key>label</key>
+			<string>左右偏移</string>
+			<key>min</key>
+			<real>-120</real>
+			<key>max</key>
+			<real>120</real>
+			<key>default</key>
+			<real>-25</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>toolbarLift</string>
+			<key>label</key>
+			<string>抬高(离底边)</string>
+			<key>min</key>
+			<real>0</real>
+			<key>max</key>
+			<real>120</real>
+			<key>default</key>
+			<real>35</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>iconSize</string>
+			<key>label</key>
+			<string>图标大小</string>
+			<key>min</key>
+			<real>11</real>
+			<key>max</key>
+			<real>26</real>
+			<key>default</key>
+			<real>15</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>说明</string>
+			<key>footerText</key>
+			<string>只注入普通 App 键盘，不碰主屏幕/设置/系统进程。默认位置为验证过的安全位（居中偏左、抬高35pt），挡到语音键就调"左右偏移"和"抬高"。</string>
 		</dict>
 	</array>
 </dict>

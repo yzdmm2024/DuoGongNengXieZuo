@@ -1,0 +1,4 @@
+#!/bin/bash
+# 升级前清理：删除旧版中文文件名的 PreferenceLoader 入口，避免设置里出现重复/失效入口
+rm -f "/var/jb/Library/PreferenceLoader/Preferences/键盘下方状态.plist" 2>/dev/null || true
+exit 0

@@ -4,12 +4,10 @@
 <dict>
 	<key>entry</key>
 	<dict>
-		<!-- bundle 必须与 PreferenceBundles/ 下的目录名（去 .bundle）完全一致 -->
 		<key>bundle</key>
 		<string>KeyboardStatusPrefs</string>
 		<key>cell</key>
 		<string>PSLinkCell</string>
-		<!-- detail 必须与 bundle Info.plist 的 NSPrincipalClass 一致 -->
 		<key>detail</key>
 		<string>KSSettingsController</string>
 		<key>isController</key>
