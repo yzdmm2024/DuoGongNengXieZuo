@@ -2,7 +2,9 @@
 # 适配 iOS 16 rootless（Dopamine / Relaxin / RootHide 隐根越狱）
 # 构建：make package  （需在 macOS + theos 环境下，CI 已配置）
 
-TARGET := iphone:clang:latest:16.0
+# SDK 14.5（theos/sdks）：新 Xcode SDK 已不带私有框架 tbd（Preferences 等），
+# 链接 Preferences.framework 必须用老 SDK；deployment 14.0 不影响跑 16.6.1
+TARGET := iphone:clang:14.5:14.0
 ARCHS = arm64
 THEOS_PACKAGE_SCHEME = rootless
 INSTALL_TARGET_PROCESSES = SpringBoard

@@ -17,6 +17,10 @@ jobs:
           sudo mkdir -p /opt/theos
           sudo chown $(whoami) /opt/theos
           git clone --recursive https://github.com/theos/theos.git /opt/theos
+          # 新 Xcode SDK 不再附带私有框架 tbd，用 theos 官方 14.5 SDK 链接 Preferences.framework
+          rm -rf /opt/theos/sdks
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git /opt/theos/sdks
+          cd /opt/theos/sdks && git sparse-checkout set iPhoneOS14.5.sdk
 
       - name: Build package (rootless)
         run: |
