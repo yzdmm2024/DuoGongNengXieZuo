@@ -110,10 +110,7 @@ static NSDictionary *ksBtnSpecs(void) {
 @end
 
 @implementation KSPreviewCell {
-    UIView        *_kbBg;     // 键盘模拟背景
-    NSMutableArray *_keyViews; // 固定按键（不随配置变）
-    CGFloat        _drawnW;    // 按键绘制时的宽度（变了才重画）
-    UIStackView   *_bar;      // 工具条（实时渲染）
+    UIStackView   *_bar;      // 工具条（实时渲染，1:1 真实尺寸，无键盘主体）
     NSLayoutConstraint *_cx, *_btm;
     NSTimer       *_timer;
     NSString      *_builtSig;
@@ -125,8 +122,6 @@ static NSDictionary *ksBtnSpecs(void) {
     if (self) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = UIColor.clearColor;
-        _keyViews = [[NSMutableArray alloc] init];
-        [self buildViews];
         [self refresh];
     }
     return self;
@@ -136,123 +131,6 @@ static NSDictionary *ksBtnSpecs(void) {
 - (instancetype)initWithSpecifier:(PSSpecifier *)specifier {
     self = [self initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     return self;
-}
-
-- (UIColor *)ksKbColor {
-    return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
-        return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
-            ? [UIColor colorWithRed:0.18 green:0.18 blue:0.20 alpha:1]
-            : [UIColor colorWithRed:0.85 green:0.86 blue:0.87 alpha:1];
-    }];
-}
-
-- (UIColor *)ksKeyColor {
-    return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
-        return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
-            ? [UIColor colorWithRed:0.32 green:0.32 blue:0.34 alpha:1] : [UIColor whiteColor];
-    }];
-}
-
-- (void)buildViews {
-    @try {
-        _kbBg = [[UIView alloc] initWithFrame:CGRectZero];
-        _kbBg.translatesAutoresizingMaskIntoConstraints = NO;
-        _kbBg.layer.cornerRadius = 14;
-        _kbBg.layer.masksToBounds = YES;
-        _kbBg.backgroundColor = [self ksKbColor];
-        [self.contentView addSubview:_kbBg];
-
-        [NSLayoutConstraint activateConstraints:@[
-            [_kbBg.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:6],
-            [_kbBg.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:14],
-            [_kbBg.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-14],
-            [_kbBg.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-8],
-        ]];
-    } @catch (NSException *e) {}
-}
-
-// 固定键盘主体：4 行按键示意（QWERTY / ASDF / shift行 / dock行），不随配置变化
-- (void)ksDrawKeysIfNeeded {
-    @try {
-        CGFloat W = _kbBg.bounds.size.width, H = _kbBg.bounds.size.height;
-        if (W <= 10 || H <= 10) return;
-        if (_keyViews.count && fabs(W - _drawnW) < 1) return;
-        _drawnW = W;
-        for (UIView *v in _keyViews) [v removeFromSuperview];
-        [_keyViews removeAllObjects];
-
-        CGFloat rowH = 20, gap = 3, side = 8;
-        CGFloat blockH = rowH * 4 + gap * 3;
-        CGFloat y0 = H - blockH - 6; // 键区从底部往上
-
-        NSArray<NSArray *> *rows = @[
-            @[@10, @"Q,W,E,R,T,Y,U,I,O,P"],
-            @[@9,  @"A,S,D,F,G,H,J,K,L"],
-            @[@9,  @"⇧,Z,X,C,V,B,N,M,⌫"],
-        ];
-        CGFloat y = y0;
-        for (NSArray *row in rows) {
-            NSUInteger n = [row[0] unsignedIntegerValue];
-            NSArray *keys = [row[1] componentsSeparatedByString:@","];
-            CGFloat kw = (W - side * 2 - gap * (n - 1)) / n;
-            CGFloat x = side;
-            for (NSString *label in keys) {
-                UIView *k = [[UIView alloc] initWithFrame:CGRectMake(x, y, kw, rowH)];
-                k.backgroundColor = [self ksKeyColor];
-                k.layer.cornerRadius = 4;
-                UILabel *l = [[UILabel alloc] initWithFrame:k.bounds];
-                l.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                l.text = label;
-                l.font = [UIFont systemFontOfSize:10];
-                l.textAlignment = NSTextAlignmentCenter;
-                l.textColor = [UIColor secondaryLabelColor];
-                [k addSubview:l];
-                [_kbBg addSubview:k];
-                [_keyViews addObject:k];
-                x += kw + gap;
-            }
-            y += rowH + gap;
-        }
-        // 底部 dock 行：123 + 空格 + 发送
-        CGFloat dy = y;
-        CGFloat dw1 = (W - side * 2 - gap * 2) * 0.22;
-        CGFloat dw2 = (W - side * 2 - gap * 2) * 0.50;
-        CGFloat dw3 = (W - side * 2 - gap * 2) * 0.28;
-        NSArray *dockSpec = @[
-            @[[NSValue valueWithCGRect:CGRectMake(side, dy, dw1, rowH)], @"123"],
-            @[[NSValue valueWithCGRect:CGRectMake(side + dw1 + gap, dy, dw2, rowH)], @""],
-            @[[NSValue valueWithCGRect:CGRectMake(side + dw1 + gap * 2 + dw2, dy, dw3, rowH)], @"发送"],
-        ];
-        for (NSArray *spec in dockSpec) {
-            CGRect f = [[spec objectAtIndex:0] CGRectValue];
-            NSString *label = [spec objectAtIndex:1];
-            UIView *k = [[UIView alloc] initWithFrame:f];
-            BOOL isSend = [label isEqualToString:@"发送"];
-            k.backgroundColor = label.length == 0
-                ? [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
-                    return (t.userInterfaceStyle == UIUserInterfaceStyleDark)
-                        ? [UIColor colorWithWhite:0.45 alpha:1] : [UIColor whiteColor];
-                  }]
-                : (isSend ? [UIColor systemGray3Color] : [UIColor systemGray4Color]);
-            k.layer.cornerRadius = 4;
-            if (label.length) {
-                UILabel *l = [[UILabel alloc] initWithFrame:k.bounds];
-                l.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                l.text = label;
-                l.font = [UIFont systemFontOfSize:10];
-                l.textAlignment = NSTextAlignmentCenter;
-                l.textColor = [UIColor secondaryLabelColor];
-                [k addSubview:l];
-            }
-            [_kbBg addSubview:k];
-            [_keyViews addObject:k];
-        }
-    } @catch (NSException *e) {}
-}
-
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    [self ksDrawKeysIfNeeded];
 }
 
 - (UIButton *)ksMakeBtn:(NSString *)sf fallback:(NSString *)fb {
@@ -285,8 +163,8 @@ static NSDictionary *ksBtnSpecs(void) {
         _bar.alignment = UIStackViewAlignmentCenter;
         _bar.spacing = 4;
         _bar.translatesAutoresizingMaskIntoConstraints = NO;
-        // 与真实工具栏一致：无独立底色，图标直接浮在键盘背景上
-        [_kbBg addSubview:_bar];
+        // 与真实工具栏一致：无独立底色，图标直接浮在 cell 底色上（1:1，无键盘主体）
+        [self.contentView addSubview:_bar];
 
         // 与 tweak 同款竖线分隔符（剪贴板历史/光标/收起/快捷启动前各一条）
         UIView *__sep;
@@ -320,13 +198,13 @@ static NSDictionary *ksBtnSpecs(void) {
             if (b) [_bar addArrangedSubview:b];
         }
 
-        // 与 tweak 完全同款的定位方式：centerX 偏移 + 底边抬高
-        _cx  = [_bar.centerXAnchor constraintEqualToAnchor:_kbBg.centerXAnchor constant:offX];
-        _btm = [_bar.bottomAnchor constraintEqualToAnchor:_kbBg.bottomAnchor constant:-lift];
+        // 与 tweak 完全同款的定位方式：centerX 偏移 + 底边抬高（相对 cell 底边，1:1 映射）
+        _cx  = [_bar.centerXAnchor constraintEqualToAnchor:self.contentView.centerXAnchor constant:offX];
+        _btm = [_bar.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-lift];
         _cx.active = YES; _btm.active = YES;
 
         // 极端参数（抬高 120 + 图标 26）下 top 防越界约束可能与 bottom 冲突，降级防 unsatisfiable
-        NSLayoutConstraint *topGuard = [_bar.topAnchor constraintLessThanOrEqualToAnchor:_kbBg.topAnchor constant:10];
+        NSLayoutConstraint *topGuard = [_bar.topAnchor constraintLessThanOrEqualToAnchor:self.contentView.topAnchor constant:2];
         topGuard.priority = 999;
         topGuard.active = YES;
 
@@ -338,8 +216,8 @@ static NSDictionary *ksBtnSpecs(void) {
 - (void)onPan:(UIPanGestureRecognizer *)p {
     @try {
         if (!_bar) return;
-        CGPoint t = [p translationInView:_kbBg];
-        [p setTranslation:CGPointZero inView:_kbBg];
+        CGPoint t = [p translationInView:self.contentView];
+        [p setTranslation:CGPointZero inView:self.contentView];
         CGFloat offX = KSFloat(@"toolbarX", -25) + t.x;
         CGFloat lift = KSFloat(@"toolbarLift", 35) - t.y; // 往上拖 = 抬高增大
         offX = MIN(120, MAX(-120, offX));

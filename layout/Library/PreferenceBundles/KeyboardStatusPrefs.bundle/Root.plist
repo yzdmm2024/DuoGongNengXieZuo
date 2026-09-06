@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>title</key>
-	<string>键盘下方状态 1.0.7</string>
+	<string>键盘下方状态 1.0.8</string>
 	<key>items</key>
 	<array>
 		<dict>
@@ -230,7 +230,7 @@
 			<key>label</key>
 			<string>实时预览</string>
 			<key>footerText</key>
-			<string>预览固定在页面底部（避免被软键盘遮挡），只渲染键盘底部工具栏，键盘主体保持固定。开关/滑块改动立即反映；直接拖动工具条可调位置（左右=偏移，上下=抬高），改完其他 App 的键盘立即跟随。</string>
+			<string>只渲染真实键盘最底部那行工具栏（1:1 尺寸，无键盘主体）：工具栏离底边的高度=「抬高」值，左右位置=「偏移」值。上下/左右拖动工具条即调位置；开关/滑块改动立即反映，其他 App 的键盘实时跟随。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -238,7 +238,7 @@
 			<key>cellClass</key>
 			<string>KSPreviewCell</string>
 			<key>height</key>
-			<real>185</real>
+			<real>160</real>
 		</dict>
 	</array>
 </dict>
