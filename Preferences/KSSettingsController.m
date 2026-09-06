@@ -750,7 +750,7 @@ static void ksAIPreset(NSInteger preset, NSString **urlOut, NSString **modelOut)
         [req setValue:[NSString stringWithFormat:@"Bearer %@", key] forHTTPHeaderField:@"Authorization"];
 
         __weak typeof(self) wself = self;
-        [[NSURLSession sharedSession] dataTaskWithRequest:req
+        NSURLSessionDataTask *t = [[NSURLSession sharedSession] dataTaskWithRequest:req
             completionHandler:^(NSData *dt, NSURLResponse *r, NSError *e) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 __strong typeof(wself) sself = wself;
@@ -793,7 +793,8 @@ static void ksAIPreset(NSInteger preset, NSString **urlOut, NSString **modelOut)
                     [sself ksShowResult:@"❌ 异常" message:ex.reason ?: @"解析失败"];
                 }
             });
-        }] resume;
+        }];
+        [t resume];
     } @catch (NSException *e) {
         _running = NO;
         [self ksShowResult:@"❌ 异常" message:e.reason ?: @"测试失败"];
