@@ -467,11 +467,7 @@ static NSDictionary *ksBtnSpecs(void) {
 
 #pragma mark - App 选择页（全部第三方 App 带图标，点选即设并自动返回）
 
-@interface LSApplicationWorkspace : NSObject
-+ (instancetype)defaultWorkspace;
-- (NSArray *)allInstalledApplications;
-@end
-
+// LSApplicationWorkspace 是私有类（SDK 无符号），一律 NSClassFromString 运行时获取，避免链接错误
 @interface LSApplicationProxy : NSObject
 - (NSString *)localizedName;
 - (NSString *)bundleIdentifier;
@@ -506,7 +502,12 @@ static NSDictionary *ksBtnSpecs(void) {
 - (void)ksLoad {
     NSMutableArray *list = [NSMutableArray array];
     @try {
-        NSArray *all = [[LSApplicationWorkspace defaultWorkspace] allInstalledApplications] ?: @[];
+        Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
+        NSArray *all = @[];
+        if (wsCls) {
+            id ws = [(id)wsCls performSelector:@selector(defaultWorkspace)];
+            if (ws) all = [ws performSelector:@selector(allInstalledApplications)] ?: @[];
+        }
         for (LSApplicationProxy *p in all) {
             NSString *bid = p.bundleIdentifier;
             if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
