@@ -1,5 +1,6 @@
 #import <Preferences/Preferences.h>
 #import <objc/runtime.h>
+#import <dlfcn.h>
 
 #define KS_SUITE @"com.yzdmm.keyboardstatus"
 // 与 Tweak.xm 里监听的同名 darwin 通知：面板改值 → tweak 实时刷新
@@ -515,11 +516,62 @@ static NSDictionary *ksBtnSpecs(void) {
     [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"a"];
 }
 
-// 列全部第三方 App；跳转 scheme 直接读 App 自己声明的 CFBundleURLTypes
+// 通道2兜底：LSApplicationWorkspace 拿不到时直接扫 App 安装目录读 Info.plist
+// （设置进程是平台进程，磁盘可读；图标走 UIKit 私有 API 懒加载）
+static NSArray *ksScanDiskApps(void) {
+    NSMutableArray *list = [NSMutableArray array];
+    @try {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray *bases = @[@"/var/mobile/Containers/Bundle/Application",
+                           @"/var/containers/Bundle/Application",
+                           @"/var/jb/var/mobile/Containers/Bundle/Application"];
+        for (NSString *base in bases) {
+            for (NSString *uuid in [fm contentsOfDirectoryAtPath:base error:nil]) {
+                NSString *dir = [base stringByAppendingPathComponent:uuid];
+                for (NSString *a in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+                    if (![a hasSuffix:@".app"]) continue;
+                    NSString *infoPath = [dir stringByAppendingPathComponent:
+                                          [a stringByAppendingPathComponent:@"Info.plist"]];
+                    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+                    if (![info isKindOfClass:[NSDictionary class]]) continue;
+                    NSString *bid = info[@"CFBundleIdentifier"];
+                    if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                    if ([bid hasPrefix:@"com.apple."]) continue;
+                    BOOL dup = NO;
+                    for (NSDictionary *e in list)
+                        if ([e[@"bid"] isEqualToString:bid]) { dup = YES; break; }
+                    if (dup) continue;
+                    NSString *name = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: bid;
+                    NSString *scheme = @"";
+                    id types = info[@"CFBundleURLTypes"];
+                    if ([types isKindOfClass:[NSArray class]]) {
+                        for (NSDictionary *t in types) {
+                            id names = t[@"CFBundleURLSchemes"];
+                            if ([names isKindOfClass:[NSArray class]] && [names count] > 0) {
+                                id s = [names firstObject];
+                                if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
+                            }
+                        }
+                    }
+                    [list addObject:@{ @"bid": bid, @"name": name,
+                                       @"icon": [NSNull null], @"scheme": scheme }];
+                }
+            }
+            if (list.count) break; // 主路径有数据就不再试备用路径
+        }
+    } @catch (NSException *e) {}
+    return list;
+}
+
+// 列全部第三方 App；通道1 LSApplicationWorkspace（dlopen 保险），空则通道2扫盘
 - (void)ksLoad {
     NSMutableArray *list = [NSMutableArray array];
     @try {
         Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
+        if (!wsCls) {
+            dlopen("/System/Library/Frameworks/MobileCoreServices.framework/MobileCoreServices", RTLD_LAZY);
+            wsCls = NSClassFromString(@"LSApplicationWorkspace");
+        }
         NSArray *all = @[];
         if (wsCls) {
             id ws = [(id)wsCls performSelector:@selector(defaultWorkspace)];
@@ -550,6 +602,8 @@ static NSDictionary *ksBtnSpecs(void) {
                                @"icon": icon ?: [NSNull null],
                                @"scheme": scheme ?: @"" }];
         }
+        // 通道2：workspace 没拿到数据（类未加载/API 限制）→ 扫安装目录兜底
+        if (list.count == 0) [list addObjectsFromArray:ksScanDiskApps()];
     } @catch (NSException *e) {}
     [list sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"name"] compare:b[@"name"]];
@@ -559,16 +613,35 @@ static NSDictionary *ksBtnSpecs(void) {
     if (![_selectedBid isKindOfClass:[NSString class]]) _selectedBid = nil;
 }
 
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _apps.count; }
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
+    return _apps.count ? _apps.count : 1; // 空列表显示一行提示
+}
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"a" forIndexPath:ip];
+    if (_apps.count == 0) {
+        c.textLabel.text = @"未获取到 App 列表";
+        c.detailTextLabel.text = nil;
+        c.imageView.image = nil;
+        c.accessoryType = UITableViewCellAccessoryNone;
+        return c;
+    }
     NSDictionary *a = _apps[ip.row];
     c.textLabel.text = a[@"name"];
     NSString *scheme = a[@"scheme"];
     c.detailTextLabel.text = scheme.length ? [scheme stringByAppendingString:@"://"] : @"无 URL Scheme，不可选";
     c.detailTextLabel.textColor = scheme.length ? [UIColor secondaryLabelColor] : [UIColor systemRedColor];
     UIImage *icon = a[@"icon"];
+    if (![icon isKindOfClass:[UIImage class]]) {
+        // 扫盘兜底条目无图标：cell 复用时懒加载一次
+        if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
+            icon = [UIImage _applicationIconImageForBundleIdentifier:a[@"bid"] format:2];
+        if ([icon isKindOfClass:[UIImage class]]) {
+            NSMutableDictionary *m = [a mutableCopy];
+            m[@"icon"] = icon;
+            [_apps replaceObjectAtIndex:ip.row withObject:m];
+        }
+    }
     if ([icon isKindOfClass:[UIImage class]]) c.imageView.image = icon;
     else c.imageView.image = nil;
     c.accessoryType = [a[@"bid"] isEqualToString:_selectedBid]
@@ -578,6 +651,7 @@ static NSDictionary *ksBtnSpecs(void) {
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
+    if (_apps.count == 0 || ip.row >= (NSInteger)_apps.count) return;
     NSDictionary *a = _apps[ip.row];
     NSString *scheme = a[@"scheme"];
     if (![scheme isKindOfClass:[NSString class]] || !scheme.length) return; // 无 scheme 的不可选

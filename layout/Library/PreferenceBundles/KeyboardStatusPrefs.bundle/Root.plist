@@ -168,7 +168,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>预置模型已填好接口地址和模型名，只需填 API Key；选「自定义」后接口地址与模型名可自行修改（OpenAI 兼容格式，适配 GLM/豆包/通义/Ollama/中转）。</string>
+			<string>「AI 模型」选预置的话，接口地址和模型名都已配好，只需填 API Key；选「自定义 OpenAI 兼容接口」后，下面两行地址和模型名改成你自己的（适配豆包/通义/Ollama/中转）。「默认单击动作」= 点 AI 按钮执行什么；「输出行为」= 结果替换选中文字还是追加在后面。</string>
 			<key>label</key>
 			<string>AI 大模型</string>
 		</dict>
@@ -209,7 +209,7 @@
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>aiPreset</string>
-			<key>title</key>
+			<key>label</key>
 			<string>AI 模型</string>
 		</dict>
 		<dict>
@@ -225,6 +225,8 @@
 			<string>aiApiKey</string>
 			<key>label</key>
 			<string>API Key</string>
+			<key>secure</key>
+			<true/>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -315,7 +317,7 @@
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>aiDefaultAction</string>
-			<key>title</key>
+			<key>label</key>
 			<string>默认单击动作</string>
 		</dict>
 		<dict>
@@ -339,7 +341,7 @@
 			<string>com.yzdmm.keyboardstatus</string>
 			<key>key</key>
 			<string>aiOutputMode</string>
-			<key>title</key>
+			<key>label</key>
 			<string>输出行为</string>
 		</dict>
 		<dict>
@@ -356,7 +358,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>模板里用 {{text}} 代表选中的文字，填写后长按 AI 菜单底部会出现对应条目。例：把下面文本改成正式书面语气：{{text}}</string>
+			<string>这是给 AI 的自定义指令（高级玩家用）。模板里 {{text}} 会自动替换成你选中的文字；填写后，长按 AI 按钮的菜单底部会出现「自定义模板1/2」条目，点它就按你的指令处理选中文本。例：把下面文本改成正式书面语气：{{text}}。不需要就留空。</string>
 			<key>label</key>
 			<string>自定义 Prompt 模板（高级）</string>
 		</dict>
@@ -530,6 +532,6 @@
 		</dict>
 	</array>
 	<key>title</key>
-	<string>键盘下方状态 1.2.0</string>
+	<string>键盘下方状态 1.2.1</string>
 </dict>
 </plist>
