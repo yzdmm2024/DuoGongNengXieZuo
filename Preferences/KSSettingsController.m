@@ -671,7 +671,8 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
                                        @"icon": icon ?: [NSNull null],
                                        @"scheme": [self ksSchemeOfProxy:p] }];
                 } @catch (NSException *e) {
-                    [diag addObject:[NSString stringWithFormat:@"p异常:%@", e.name ?: @""]];
+                    if (diag.count < 6) // 只记前几条，避免诊断行刷屏
+                        [diag addObject:[NSString stringWithFormat:@"p异常:%@", e.name ?: @""]];
                 }
             }
         }
@@ -693,7 +694,8 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
                                            @"icon": [NSNull null],
                                            @"scheme": [self ksSchemeOfProxy:p] }];
                     } @catch (NSException *e) {
-                        [diag addObject:[NSString stringWithFormat:@"p异常:%@", e.name ?: @""]];
+                        if (diag.count < 6) // 只记前几条，避免诊断行刷屏
+                            [diag addObject:[NSString stringWithFormat:@"p异常:%@", e.name ?: @""]];
                     }
                 }
             }
