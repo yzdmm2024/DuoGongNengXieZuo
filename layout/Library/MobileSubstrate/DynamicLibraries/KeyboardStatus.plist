@@ -6,8 +6,6 @@
 	<dict>
 		<key>Bundles</key>
 		<array>
-			<!-- ⚠️ 绝对不注入 com.apple.springboard / com.apple.Preferences（会导致 dock 挂掉/看门狗/白苹果）-->
-			<!-- 只注入会弹出系统键盘的普通 App -->
 			<string>com.apple.MobileSMS</string>
 			<string>com.apple.mobilemail</string>
 			<string>com.apple.mobilenotes</string>
