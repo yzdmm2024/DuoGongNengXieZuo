@@ -341,7 +341,7 @@ static char kKSBtmKey;
             KSBool(@"showDismiss", YES)];
         UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
-        if (stack && (![built isEqualToString:sig])) {
+        if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
             [stack removeFromSuperview];
             stack = nil;
         }

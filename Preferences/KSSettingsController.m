@@ -228,9 +228,10 @@ static NSDictionary *ksBtnSpecs(void) {
         _btm = [_bar.bottomAnchor constraintEqualToAnchor:_kbBg.bottomAnchor constant:-lift];
         _cx.active = YES; _btm.active = YES;
 
-        [NSLayoutConstraint activateConstraints:@[
-            [_bar.topAnchor constraintLessThanOrEqualToAnchor:_kbBg.topAnchor constant:10],
-        ]];
+        // 极端参数（抬高 120 + 图标 26）下 top 防越界约束可能与 bottom 冲突，降级防 unsatisfiable
+        NSLayoutConstraint *topGuard = [_bar.topAnchor constraintLessThanOrEqualToAnchor:_kbBg.topAnchor constant:10];
+        topGuard.priority = 999;
+        topGuard.active = YES;
 
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
         [_bar addGestureRecognizer:pan];
