@@ -272,6 +272,79 @@ static NSDictionary *ksBtnSpecs(void) {
 
 @end
 
+#pragma mark - 自定义滑块 cell：左侧文字 + 右侧滑条（iOS16 PSSliderCell 不渲染 label，且整组拆卡间距太大）
+
+@interface KSSliderCell : PSTableCell
+@end
+
+@implementation KSSliderCell {
+    UISlider    *_slider;
+    UILabel     *_label;
+    PSSpecifier *_spec;
+}
+
+- (CGFloat)ksNumForSpec:(PSSpecifier *)spec forKey:(NSString *)k def:(CGFloat)def {
+    id v = [spec propertyForKey:k];
+    return [v isKindOfClass:[NSNumber class]] ? [v floatValue] : def;
+}
+
+- (instancetype)initWithSpecifier:(PSSpecifier *)spec {
+    self = [self initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    if (self) {
+        _spec = spec;
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        self.backgroundColor = UIColor.clearColor;
+
+        NSString *key   = [spec propertyForKey:@"key"] ?: @"";
+        NSString *title = [spec propertyForKey:@"label"] ?: key;
+        CGFloat mn = [self ksNumForSpec:spec forKey:@"min" def:0];
+        CGFloat mx = [self ksNumForSpec:spec forKey:@"max" def:100];
+        CGFloat dv = [self ksNumForSpec:spec forKey:@"default" def:mn];
+
+        _label = [[UILabel alloc] init];
+        _label.text = title;
+        _label.font = [UIFont systemFontOfSize:15];
+        _label.textColor = [UIColor labelColor];
+
+        _slider = [[UISlider alloc] init];
+        _slider.minimumValue = mn;
+        _slider.maximumValue = mx;
+        _slider.value = KSFloat(key, dv);
+        [_slider addTarget:self action:@selector(ksSlide:) forControlEvents:UIControlEventValueChanged];
+
+        _label.translatesAutoresizingMaskIntoConstraints = NO;
+        _slider.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:_label];
+        [self.contentView addSubview:_slider];
+        [NSLayoutConstraint activateConstraints:@[
+            [_label.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+            [_label.widthAnchor constraintGreaterThanOrEqualToConstant:88],
+            [_label.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [_slider.leadingAnchor constraintEqualToAnchor:_label.trailingAnchor constant:12],
+            [_slider.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+            [_slider.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [_slider.topAnchor constraintGreaterThanOrEqualToAnchor:self.contentView.topAnchor constant:8],
+        ]];
+    }
+    return self;
+}
+
+// 兜底 init（实际走 initWithSpecifier；纯防崩溃）
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
+    self = [super initWithStyle:style reuseIdentifier:rid];
+    return self;
+}
+
+- (void)ksSlide:(UISlider *)s {
+    @try {
+        NSString *key = [_spec propertyForKey:@"key"];
+        if (![key isKindOfClass:[NSString class]] || !key.length) return;
+        KSWriteKey(key, @(s.value)); // 直写 jbroot 文件 + 广播，预览与真实键盘实时跟随
+    } @catch (NSException *e) {}
+}
+
+@end
+
 #pragma mark - 主设置控制器
 
 @interface KSSettingsController : PSListController
