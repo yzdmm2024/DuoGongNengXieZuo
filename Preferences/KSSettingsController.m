@@ -421,22 +421,35 @@ static NSDictionary *ksBtnSpecs(void) {
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                                                       target:self action:@selector(done)];
+    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"k"];
+}
+
+// 进页面立刻进入编辑模式（UITableViewController 层会同步 tableView，把手才出现）
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self setEditing:YES animated:NO];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [_keys removeAllObjects];
     [_keys addObjectsFromArray:ksFinalButtonOrder()];
-    [self.tableView setEditing:YES animated:NO];
     [self.tableView reloadData];
 }
 
-- (void)done { [self.navigationController popViewControllerAnimated:YES]; }
+- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)s {
+    return @"按住右侧 ≡ 把手，上下拖动即可调整按钮从左到右的顺序";
+}
+
+- (void)done {
+    if (self.presentingViewController) [self dismissViewControllerAnimated:YES completion:nil];
+    else [self.navigationController popViewControllerAnimated:YES];
+}
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _keys.count; }
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"k" forIndexPath:ip];
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"k"];
     if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"k"];
     NSString *k = _keys[ip.row];
     c.textLabel.text = _names[k] ?: k;
@@ -601,6 +614,16 @@ static NSDictionary *ksBtnSpecs(void) {
     _spec = spec;
 }
 
+// 双通道触发：tap 手势 + 点击选中（didSelectRow 会走 setSelected:YES），
+// 防止其中一条路径被 Preferences 框架吞掉导致点击无反应
+- (void)setSelected:(BOOL)selected animated:(BOOL)animated {
+    [super setSelected:selected animated:animated];
+    if (selected) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(ksOpen) object:nil];
+        [self performSelector:@selector(ksOpen) withObject:nil afterDelay:0.05];
+    }
+}
+
 - (UIViewController *)ksOwningVC {
     UIResponder *r = self.nextResponder;
     while (r && ![r isKindOfClass:[UIViewController class]]) r = r.nextResponder;
@@ -610,12 +633,19 @@ static NSDictionary *ksBtnSpecs(void) {
 - (void)ksOpen {
     @try {
         NSString *menu = [_spec propertyForKey:@"menu"];
-        UIViewController *owner = [self ksOwningVC];
-        if (!owner.navigationController) return;
         UIViewController *target = nil;
         if ([menu isEqualToString:@"order"]) target = [[KSOrderViewController alloc] init];
         else if ([menu isEqualToString:@"apppicker"]) target = [[KSAppPickerViewController alloc] init];
-        if (target) [owner.navigationController pushViewController:target animated:YES];
+        if (!target) return;
+        UIViewController *owner = [self ksOwningVC];
+        if (owner.navigationController) {
+            [owner.navigationController pushViewController:target animated:YES];
+        } else {
+            // 兜底：无导航栈时模态弹出
+            UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:target];
+            nav.modalPresentationStyle = UIModalPresentationPageSheet;
+            [owner presentViewController:nav animated:YES completion:nil];
+        }
     } @catch (NSException *e) {}
 }
 

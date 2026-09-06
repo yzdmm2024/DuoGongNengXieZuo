@@ -2,8 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>title</key>
-	<string>键盘下方状态 1.1.0</string>
 	<key>items</key>
 	<array>
 		<dict>
@@ -27,10 +25,10 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>工具栏开关</string>
 			<key>footerText</key>
 			<string>关掉某项立即生效，上面的预览同步显示（其他 App 的键盘也会实时跟随）。</string>
+			<key>label</key>
+			<string>工具栏开关</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -145,32 +143,32 @@
 			<string>PSCustomCell</string>
 			<key>cellClass</key>
 			<string>KSMenuCell</string>
+			<key>height</key>
+			<real>44.0</real>
 			<key>label</key>
-			<string>按钮排序（拖动调整键盘从左到右）</string>
+			<string>按钮排序（点击进入，拖动 ≡ 调整顺序）</string>
 			<key>menu</key>
 			<string>order</string>
-			<key>height</key>
-			<real>44</real>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>快捷启动</string>
 			<key>footerText</key>
 			<string>开启「快捷启动按钮」后，点工具栏上的切换按钮即跳到所选 App。推荐点「选择跳转 App」从列表里选（带图标、点选即设、自动替换旧选择）；下面的手输框是高级选项，可填任意 URL Scheme（如 App-prefs:root=General 跳系统设置）。控制中心/后台切换属系统级手势，App 内无法拉起。</string>
+			<key>label</key>
+			<string>快捷启动</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSCustomCell</string>
 			<key>cellClass</key>
 			<string>KSMenuCell</string>
+			<key>height</key>
+			<real>44.0</real>
 			<key>label</key>
 			<string>选择跳转 App（带图标，点选即设）</string>
 			<key>menu</key>
 			<string>apppicker</string>
-			<key>height</key>
-			<real>44</real>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -187,106 +185,106 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>位置与大小</string>
 			<key>footerText</key>
 			<string>改动立即生效，其他 App 的键盘实时跟随；也可直接拖动底部预览里的工具条调位置。</string>
+			<key>label</key>
+			<string>位置与大小</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>位置与大小</string>
 			<key>footerText</key>
 			<string>改动立即生效，其他 App 的键盘实时跟随；也可直接拖动底部预览里的工具条调位置。</string>
+			<key>label</key>
+			<string>位置与大小</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSCustomCell</string>
 			<key>cellClass</key>
 			<string>KSSliderCell</string>
+			<key>default</key>
+			<real>-25.0</real>
+			<key>height</key>
+			<real>44.0</real>
 			<key>key</key>
 			<string>toolbarX</string>
 			<key>label</key>
 			<string>左右偏移</string>
-			<key>min</key>
-			<real>-120</real>
 			<key>max</key>
-			<real>120</real>
-			<key>default</key>
-			<real>-25</real>
-			<key>height</key>
-			<real>44</real>
+			<real>120.0</real>
+			<key>min</key>
+			<real>-120.0</real>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSCustomCell</string>
 			<key>cellClass</key>
 			<string>KSSliderCell</string>
+			<key>default</key>
+			<real>35.0</real>
+			<key>height</key>
+			<real>44.0</real>
 			<key>key</key>
 			<string>toolbarLift</string>
 			<key>label</key>
 			<string>上下抬高</string>
-			<key>min</key>
-			<real>0</real>
 			<key>max</key>
-			<real>120</real>
-			<key>default</key>
-			<real>35</real>
-			<key>height</key>
-			<real>44</real>
+			<real>120.0</real>
+			<key>min</key>
+			<real>0.0</real>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSCustomCell</string>
 			<key>cellClass</key>
 			<string>KSSliderCell</string>
+			<key>default</key>
+			<real>15.0</real>
+			<key>height</key>
+			<real>44.0</real>
 			<key>key</key>
 			<string>iconSize</string>
 			<key>label</key>
 			<string>图标大小</string>
-			<key>min</key>
-			<real>11</real>
 			<key>max</key>
-			<real>26</real>
-			<key>default</key>
-			<real>15</real>
-			<key>height</key>
-			<real>44</real>
+			<real>26.0</real>
+			<key>min</key>
+			<real>11.0</real>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSCustomCell</string>
 			<key>cellClass</key>
 			<string>KSSliderCell</string>
+			<key>default</key>
+			<real>4.0</real>
+			<key>height</key>
+			<real>44.0</real>
 			<key>key</key>
 			<string>toolbarSpacing</string>
 			<key>label</key>
 			<string>图标间隔</string>
-			<key>min</key>
-			<real>0</real>
 			<key>max</key>
-			<real>24</real>
-			<key>default</key>
-			<real>4</real>
-			<key>height</key>
-			<real>44</real>
+			<real>24.0</real>
+			<key>min</key>
+			<real>0.0</real>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>说明</string>
 			<key>footerText</key>
 			<string>只注入普通 App 键盘，不碰主屏幕/设置/系统进程。默认位置为验证过的安全位（居中偏左、抬高35pt），挡到语音键就调"左右偏移"和"抬高"。</string>
+			<key>label</key>
+			<string>说明</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>实时预览</string>
 			<key>footerText</key>
 			<string>只渲染真实键盘最底部那行工具栏（1:1 尺寸，无键盘主体）：工具栏离底边的高度=「抬高」值，左右位置=「偏移」值。上下/左右拖动工具条即调位置；开关/滑块改动立即反映，其他 App 的键盘实时跟随。</string>
+			<key>label</key>
+			<string>实时预览</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -294,8 +292,10 @@
 			<key>cellClass</key>
 			<string>KSPreviewCell</string>
 			<key>height</key>
-			<real>160</real>
+			<real>160.0</real>
 		</dict>
 	</array>
+	<key>title</key>
+	<string>键盘下方状态 1.1.1</string>
 </dict>
 </plist>
