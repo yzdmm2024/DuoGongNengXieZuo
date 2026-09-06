@@ -486,6 +486,10 @@ static NSDictionary *ksBtnSpecs(void) {
 #pragma mark - App 选择页（全部第三方 App 带图标，点选即设并自动返回）
 
 // LSApplicationWorkspace 是私有类（SDK 无符号），一律 NSClassFromString 运行时获取，避免链接错误
+@interface UIImage (KSIconPriv)
++ (UIImage *)_applicationIconImageForBundleIdentifier:(NSString *)bid format:(NSInteger)fmt;
+@end
+
 @interface LSApplicationProxy : NSObject
 + (NSArray *)allApplications;
 - (NSString *)localizedName;
