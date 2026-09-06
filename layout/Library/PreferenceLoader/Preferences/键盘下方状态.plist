@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>entry</key>
+	<dict>
+		<!-- bundle 必须与 PreferenceBundles/ 下的目录名（去 .bundle）完全一致 -->
+		<key>bundle</key>
+		<string>KeyboardStatusPrefs</string>
+		<key>cell</key>
+		<string>PSLinkCell</string>
+		<!-- detail 必须与 bundle Info.plist 的 NSPrincipalClass 一致 -->
+		<key>detail</key>
+		<string>KSSettingsController</string>
+		<key>isController</key>
+		<true/>
+		<key>label</key>
+		<string>键盘下方状态</string>
+	</dict>
+</dict>
+</plist>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Filter</key>
+	<dict>
+		<key>Bundles</key>
+		<array>
+			<!-- ⚠️ 绝对不注入 com.apple.springboard / com.apple.Preferences（会导致 dock 挂掉/看门狗/白苹果）-->
+			<!-- 只注入会弹出系统键盘的普通 App -->
+			<string>com.apple.MobileSMS</string>
+			<string>com.apple.mobilemail</string>
+			<string>com.apple.mobilenotes</string>
+			<string>com.apple.mobilesafari</string>
+			<string>com.apple.mobilecal</string>
+			<string>com.apple.mobilephone</string>
+			<string>com.apple.mobiletimer</string>
+			<string>com.apple.reminders</string>
+			<string>com.apple.mobileslideshow</string>
+			<string>com.apple.AppStore</string>
+			<string>com.apple.MobileAddressBook</string>
+			<string>com.apple.weather</string>
+			<string>com.apple.MobileStore</string>
+			<string>com.tencent.xin</string>
+			<string>com.tencent.mqq</string>
+			<string>com.alipay.iphoneclient</string>
+			<string>com.taobao.taobao4iphone</string>
+			<string>com.jingdong.app.mall</string>
+			<string>com.laiwang.DingTalk</string>
+			<string>com.xingin.xhs</string>
+			<string>tv.danmaku.bili</string>
+			<string>com.ss.iphone.ugc.Aweme</string>
+			<string>com.sina.weibo</string>
+			<string>com.baidu.BaiduMobile</string>
+			<string>com.netease.cloudmusic</string>
+			<string>com.tencent.qq.kik</string>
+		</array>
+	</dict>
+</dict>
+</plist>
