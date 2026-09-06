@@ -292,6 +292,8 @@ static NSDictionary *ksBtnSpecs(void) {
         if (!_slider) {
             _slider = [[UISlider alloc] init];
             _slider.translatesAutoresizingMaskIntoConstraints = NO;
+            // ⚠️ 事件绑定必须在这里挂（v1.0.11 重构时丢失，导致拖滑条不写入、预览不同步、切 App 回退旧值）
+            [_slider addTarget:self action:@selector(ksSlide:) forControlEvents:UIControlEventValueChanged];
             [self.contentView addSubview:_slider];
             // 左侧 ~150pt 留给 textLabel（specifier 的 label 由父类填充显示）
             [NSLayoutConstraint activateConstraints:@[
