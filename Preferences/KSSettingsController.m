@@ -494,7 +494,9 @@ static NSDictionary *ksBtnSpecs(void) {
 + (NSArray *)allApplications;
 - (NSString *)localizedName;
 - (NSString *)bundleIdentifier;
-- (id)objectForInfoDictionaryKey:(NSString *)key;
+// iOS 16.6.1 实测：objectForInfoDictionaryKey: 不存在（unrecognized selector），
+// 取 Info.plist 字典只能用 infoDictionary
+- (id)infoDictionary;
 @end
 
 // 仅声明原型（NSClassFromString 拿 Class 后强转调用，编译期不产生链接符号）
@@ -566,9 +568,14 @@ static UIImage *ksIconStd(UIImage *img) {
 }
 
 // 从 LSApplicationProxy 取 CFBundleURLSchemes（workspace/proxy 两通道共用）
+// v1.2.5：objectForInfoDictionaryKey: 在 iOS 16.6.1 不存在（298 个 App 全抛 NSInvalidArgumentException 的根因），
+// 改用 infoDictionary + objectForKey，且逐层 respondsToSelector 保护
 - (NSString *)ksSchemeOfProxy:(LSApplicationProxy *)p {
     NSString *scheme = @"";
-    id types = [p objectForInfoDictionaryKey:@"CFBundleURLTypes"];
+    if (![p respondsToSelector:@selector(infoDictionary)]) return scheme;
+    id info = [p infoDictionary];
+    if (![info respondsToSelector:@selector(objectForKey:)]) return scheme;
+    id types = [info objectForKey:@"CFBundleURLTypes"];
     if ([types isKindOfClass:[NSArray class]]) {
         for (NSDictionary *t in types) {
             id names = [t objectForKey:@"CFBundleURLSchemes"];
