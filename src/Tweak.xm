@@ -5,6 +5,8 @@
 
 static NSString *const KS_SUITE = @"com.yzdmm.keyboardstatus";
 static NSInteger const KS_TOOLBAR_TAG = 9174;
+// 设置面板改值后广播的 darwin 通知（KSSettingsController/KSPreviewCell 里同名 post）
+#define KS_DARWIN_NOTI "com.yzdmm.keyboardstatus.prefschanged"
 
 #pragma mark - 偏好（跨进程：设置面板与 tweak 共用 KS_SUITE）
 
@@ -330,11 +332,16 @@ static char kKSBtmKey;
         CGFloat offX     = KSFloat(@"toolbarX", -25);   // centerX 偏移（负=往左）
         CGFloat lift     = KSFloat(@"toolbarLift", 35); // 底部抬高量（避开 dock 行与语音键）
 
+        // 重建签名：图标大小 + 全部功能开关，任一变化都重建整个工具栏
+        //（旧版只有 iconSize 变了才重建，导致「关掉某功能按钮还在」）
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%d|%d|%d|%d|%d|%d|%d",
+            iconSize,
+            KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
+            KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
+            KSBool(@"showDismiss", YES)];
         UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
-
-        // 图标尺寸变了（或首次）→ 重建按钮
-        NSNumber *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
-        if (stack && (!built || [built floatValue] != iconSize)) {
+        NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
+        if (stack && (![built isEqualToString:sig])) {
             [stack removeFromSuperview];
             stack = nil;
         }
@@ -365,7 +372,7 @@ static char kKSBtmKey;
             NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor constant:offX];
             NSLayoutConstraint *btm = [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-lift];
             cx.active = YES; btm.active = YES;
-            objc_setAssociatedObject(stack, &kKSBuiltSizeKey, @(iconSize), OBJC_ASSOCIATION_RETAIN);
+            objc_setAssociatedObject(stack, &kKSBuiltSizeKey, sig, OBJC_ASSOCIATION_RETAIN);
             objc_setAssociatedObject(stack, &kKSCXKey,  cx,  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             objc_setAssociatedObject(stack, &kKSBtmKey, btm, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         } else {
@@ -380,12 +387,43 @@ static char kKSBtmKey;
 
 %end
 
+#pragma mark - darwin 通知：面板改值 → 实时刷新键盘（无需收起再拉起）
+
+static void ksRefreshLayouts(UIView *root) {
+    if ([root isKindOfClass:NSClassFromString(@"UIKeyboardDockView")]) { [root setNeedsLayout]; return; }
+    for (UIView *sub in [root subviews]) ksRefreshLayouts(sub);
+}
+
+static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
+                             CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            KSSyncPrefs();
+            UIApplication *app = [UIApplication sharedApplication];
+            NSMutableArray *wins = [NSMutableArray array];
+            if (@available(iOS 13.0, *)) {
+                for (UIScene *s in app.connectedScenes) {
+                    if ([s isKindOfClass:[UIWindowScene class]]) {
+                        [wins addObjectsFromArray:((UIWindowScene *)s).windows];
+                    }
+                }
+            }
+            if (wins.count == 0) [wins addObjectsFromArray:app.windows];
+            for (UIWindow *w in wins) ksRefreshLayouts(w);
+        } @catch (NSException *e) {}
+    });
+}
+
 #pragma mark - 注入按钮动作方法到 dock 类
 
 %ctor {
     @autoreleasepool {
         Class cls = NSClassFromString(@"UIKeyboardDockView");
         if (!cls) return;
+        // 监听设置面板的实时广播（面板每次改开关/滑块都 post 一次）
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                        ksPrefsChangedCB, CFSTR(KS_DARWIN_NOTI), NULL,
+                                        CFNotificationSuspensionBehaviorDeliverImmediately);
         struct { const char *name; IMP imp; } methods[] = {
             {"ksActSelectAll",  (IMP)ksActSelectAll},
             {"ksActCut",        (IMP)ksActCut},
