@@ -359,8 +359,11 @@ static void ksActClipboard(id s, SEL _c) { ksShowClipboardHistory(s); }
 static void ksActPhrases(id s, SEL _c)  { ksShowQuickPhrases(s); }
 static void ksActDismiss(id s, SEL _c) {
     @try {
-        Class impl = NSClassFromString(@"UIKeyboardImpl");
-        if (impl) [[impl sharedInstance] hideKeyboard];
+        // 用公开 API 让当前第一响应者（输入框）放弃焦点，从而收起键盘，避免调用私有类 UIKeyboardImpl
+        [[UIApplication sharedApplication] sendAction:@selector(resignFirstResponder)
+                                                    to:nil
+                                                  from:nil
+                                              forEvent:nil];
     } @catch (NSException *e) {}
 }
 
