@@ -593,7 +593,8 @@ static void ksAIExecute(NSString *act, UIButton *btn) {
                 id om = KSCopyPref(@"aiOutputMode");
                 if ([om isKindOfClass:[NSNumber class]]) outMode = [om integerValue];
                 else if ([om isKindOfClass:[NSString class]]) outMode = [(NSString *)om integerValue];
-                BOOL hasSel = [(id)t2 textInRange:t2.selectedTextRange].length > 0;
+                NSString *curSel = [t2 textInRange:t2.selectedTextRange] ?: @"";
+                BOOL hasSel = curSel.length > 0;
                 if (outMode == 1 || !hasSel) {
                     // 模式 B：光标后追加（或选区已丢失的兜底）
                     [(id<UITextInput>)t2 insertText:result];

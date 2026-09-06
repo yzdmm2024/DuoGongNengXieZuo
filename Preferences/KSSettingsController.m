@@ -548,7 +548,7 @@ static NSArray *ksScanDiskApps(void) {
                         for (NSDictionary *t in types) {
                             id names = t[@"CFBundleURLSchemes"];
                             if ([names isKindOfClass:[NSArray class]] && [names count] > 0) {
-                                id s = [names firstObject];
+                                NSString *s = [names firstObject];
                                 if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
                             }
                         }
