@@ -22,8 +22,10 @@ BUNDLE_NAME = KeyboardStatusPrefs
 KeyboardStatusPrefs_FILES = Preferences/KSSettingsController.m
 KeyboardStatusPrefs_INSTALL_PATH = /Library/PreferenceBundles
 KeyboardStatusPrefs_FRAMEWORKS = UIKit Foundation
+# 关键修复：显式链接 Preferences（dyld chained fixups 下不能用 dynamic_lookup，
+# 否则设置里加载 bundle 直接报「已损坏或丢失必要的资源」——与超级截图面板二进制对比确认）
+KeyboardStatusPrefs_PRIVATE_FRAMEWORKS = Preferences
 KeyboardStatusPrefs_CFLAGS = -fobjc-arc -fobjc-exceptions -w
-KeyboardStatusPrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 include $(THEOS_MAKE_PATH)/bundle.mk
