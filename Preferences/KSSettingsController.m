@@ -52,7 +52,7 @@ static void KSWriteKey(NSString *key, id value) {
     @try {
         NSString *p = ksPrefsFilePath();
         if (p) {
-            NSMutableDictionary *d = [[KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
+            NSMutableDictionary *d = [KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
             if (value) d[key] = value; else [d removeObjectForKey:key];
             if ([d writeToFile:p atomically:YES]) { KSPostChanged(); return; }
         }
@@ -406,7 +406,7 @@ static NSDictionary *ksBtnSpecs(void) {
             if ([key isKindOfClass:[NSString class]] && key.length) {
                 NSString *p = ksPrefsFilePath();
                 if (p) {
-                    NSMutableDictionary *d = [[KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
+                    NSMutableDictionary *d = [KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
                     if (value) d[key] = value;
                     [d writeToFile:p atomically:YES]; // 与 super 写的值一致，谁后写都无冲突
                 }
