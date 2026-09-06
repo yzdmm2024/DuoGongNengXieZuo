@@ -487,21 +487,21 @@ static NSDictionary *ksBtnSpecs(void) {
 
 // LSApplicationWorkspace 是私有类（SDK 无符号），一律 NSClassFromString 运行时获取，避免链接错误
 @interface LSApplicationProxy : NSObject
++ (NSArray *)allApplications;
 - (NSString *)localizedName;
 - (NSString *)bundleIdentifier;
 - (id)objectForInfoDictionaryKey:(NSString *)key;
 @end
 
-@interface UIImage (KSIconPriv)
-+ (UIImage *)_applicationIconImageForBundleIdentifier:(NSString *)bid format:(NSInteger)fmt;
-@end
-
-@interface KSAppPickerViewController : UITableViewController
+@interface KSAppPickerViewController : UITableViewController <UISearchResultsUpdating>
 @end
 
 @implementation KSAppPickerViewController {
-    NSMutableArray *_apps; // @{bid,name,icon,scheme}
+    NSMutableArray *_apps;      // @{bid,name,icon,scheme}
+    NSMutableArray *_filtered;  // 搜索过滤后的显示数组
     NSString *_selectedBid;
+    UISearchController *_searchController;
+    NSString *_diag;            // 空列表时的诊断信息
 }
 
 - (instancetype)init {
@@ -514,19 +514,68 @@ static NSDictionary *ksBtnSpecs(void) {
     [super viewDidLoad];
     [self ksLoad];
     [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"a"];
+    // 搜索框（列表非空才挂上）
+    if (_apps.count) {
+        _searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
+        _searchController.searchResultsUpdater = self;
+        _searchController.obscuresBackgroundDuringPresentation = NO;
+        _searchController.searchBar.placeholder = @"搜索 App 名称";
+        self.navigationItem.searchController = _searchController;
+        self.navigationItem.hidesSearchBarWhenScrolling = NO; // 进页面直接可见
+        _filtered = [_apps mutableCopy];
+    }
+    [self.tableView reloadData];
 }
 
-// 通道2兜底：LSApplicationWorkspace 拿不到时直接扫 App 安装目录读 Info.plist
-// （设置进程是平台进程，磁盘可读；图标走 UIKit 私有 API 懒加载）
-static NSArray *ksScanDiskApps(void) {
+- (void)updateSearchResultsForSearchController:(UISearchController *)sc {
+    [self ksApplyFilter];
+}
+
+- (void)ksApplyFilter {
+    if (!_filtered) return;
+    NSString *q = _searchController.searchBar.text ?: @"";
+    [_filtered removeAllObjects];
+    if (q.length == 0) {
+        [_filtered addObjectsFromArray:_apps];
+    } else {
+        for (NSDictionary *a in _apps) {
+            if ([a[@"name"] localizedCaseInsensitiveContainsString:q] ||
+                [a[@"bid"] localizedCaseInsensitiveContainsString:q])
+                [_filtered addObject:a];
+        }
+    }
+    [self.tableView reloadData];
+}
+
+// 从 LSApplicationProxy 取 CFBundleURLSchemes（workspace/proxy 两通道共用）
+- (NSString *)ksSchemeOfProxy:(LSApplicationProxy *)p {
+    NSString *scheme = @"";
+    id types = [p objectForInfoDictionaryKey:@"CFBundleURLTypes"];
+    if ([types isKindOfClass:[NSArray class]]) {
+        for (NSDictionary *t in types) {
+            id names = [t objectForKey:@"CFBundleURLSchemes"];
+            if ([names isKindOfClass:[NSArray class]] && [names count] > 0) {
+                NSString *s = [names firstObject];
+                if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
+            }
+        }
+    }
+    return scheme;
+}
+
+// 通道3兜底：直接扫 App 安装目录读 Info.plist（磁盘枚举，不依赖任何私有 API）
+static NSArray *ksScanDiskApps(NSMutableArray *diag) {
     NSMutableArray *list = [NSMutableArray array];
     @try {
         NSFileManager *fm = [NSFileManager defaultManager];
         NSArray *bases = @[@"/var/mobile/Containers/Bundle/Application",
                            @"/var/containers/Bundle/Application",
-                           @"/var/jb/var/mobile/Containers/Bundle/Application"];
+                           @"/var/jb/var/mobile/Containers/Bundle/Application",
+                           @"/var/jb/var/containers/Bundle/Application"];
         for (NSString *base in bases) {
-            for (NSString *uuid in [fm contentsOfDirectoryAtPath:base error:nil]) {
+            NSArray *uuids = [fm contentsOfDirectoryAtPath:base error:nil];
+            [diag addObject:[NSString stringWithFormat:@"%@:%lu", base.lastPathComponent, (unsigned long)uuids.count]];
+            for (NSString *uuid in uuids) {
                 NSString *dir = [base stringByAppendingPathComponent:uuid];
                 for (NSString *a in [fm contentsOfDirectoryAtPath:dir error:nil]) {
                     if (![a hasSuffix:@".app"]) continue;
@@ -559,87 +608,111 @@ static NSArray *ksScanDiskApps(void) {
             }
             if (list.count) break; // 主路径有数据就不再试备用路径
         }
-    } @catch (NSException *e) {}
+    } @catch (NSException *e) {
+        [diag addObject:[NSString stringWithFormat:@"扫盘异常:%@", e.reason ?: @""]];
+    }
     return list;
 }
 
-// 列全部第三方 App；通道1 LSApplicationWorkspace（dlopen 保险），空则通道2扫盘
+// 列全部第三方 App：通道1 workspace → 通道2 proxy.allApplications → 通道3 扫盘
+// 全空时 _diag 记录各层结果，显示在列表页供用户截图定位
 - (void)ksLoad {
     NSMutableArray *list = [NSMutableArray array];
+    NSMutableArray *diag = [NSMutableArray array];
     @try {
+        // 通道1：LSApplicationWorkspace（dlopen 保险）
         Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
         if (!wsCls) {
             dlopen("/System/Library/Frameworks/MobileCoreServices.framework/MobileCoreServices", RTLD_LAZY);
             wsCls = NSClassFromString(@"LSApplicationWorkspace");
         }
-        NSArray *all = @[];
+        [diag addObject:[NSString stringWithFormat:@"WS:%@", wsCls ? @"有" : @"无"]];
         if (wsCls) {
             id ws = [(id)wsCls performSelector:@selector(defaultWorkspace)];
-            if (ws) all = [ws performSelector:@selector(allInstalledApplications)] ?: @[];
-        }
-        for (LSApplicationProxy *p in all) {
-            NSString *bid = p.bundleIdentifier;
-            if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
-            if ([bid hasPrefix:@"com.apple."]) continue;
-            NSString *name = p.localizedName ?: bid;
-            UIImage *icon = nil;
-            if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
-                icon = [UIImage _applicationIconImageForBundleIdentifier:bid format:2];
-            if (!icon && [p respondsToSelector:@selector(icon)])
-                icon = [p performSelector:@selector(icon)];
-            NSString *scheme = nil;
-            id types = [p objectForInfoDictionaryKey:@"CFBundleURLTypes"];
-            if ([types isKindOfClass:[NSArray class]]) {
-                for (NSDictionary *t in types) {
-                    id names = [t objectForKey:@"CFBundleURLSchemes"];
-                    if ([names isKindOfClass:[NSArray class]] && [names count] > 0) {
-                        NSString *s = [names firstObject];
-                        if ([s isKindOfClass:[NSString class]] && s.length) { scheme = s; break; }
-                    }
-                }
+            NSArray *all = ws ? [ws performSelector:@selector(allInstalledApplications)] : nil;
+            [diag addObject:[NSString stringWithFormat:@"ws:%lu", (unsigned long)all.count]];
+            for (LSApplicationProxy *p in all) {
+                NSString *bid = p.bundleIdentifier;
+                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                if ([bid hasPrefix:@"com.apple."]) continue;
+                NSString *name = p.localizedName ?: bid;
+                UIImage *icon = nil;
+                if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
+                    icon = [UIImage _applicationIconImageForBundleIdentifier:bid format:2];
+                if (!icon && [p respondsToSelector:@selector(icon)])
+                    icon = [p performSelector:@selector(icon)];
+                [list addObject:@{ @"bid": bid, @"name": name,
+                                   @"icon": icon ?: [NSNull null],
+                                   @"scheme": [self ksSchemeOfProxy:p] }];
             }
-            [list addObject:@{ @"bid": bid, @"name": name,
-                               @"icon": icon ?: [NSNull null],
-                               @"scheme": scheme ?: @"" }];
         }
-        // 通道2：workspace 没拿到数据（类未加载/API 限制）→ 扫安装目录兜底
-        if (list.count == 0) [list addObjectsFromArray:ksScanDiskApps()];
-    } @catch (NSException *e) {}
+        // 通道2：LSApplicationProxy +allApplications（另一入口，有的环境它通）
+        if (list.count == 0) {
+            Class proxyCls = NSClassFromString(@"LSApplicationProxy");
+            BOOL sel = proxyCls && [proxyCls respondsToSelector:@selector(allApplications)];
+            NSArray *proxies = sel ? [proxyCls performSelector:@selector(allApplications)] : nil;
+            [diag addObject:[NSString stringWithFormat:@"proxy:%lu", (unsigned long)proxies.count]];
+            for (LSApplicationProxy *p in proxies) {
+                NSString *bid = p.bundleIdentifier;
+                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+                if ([bid hasPrefix:@"com.apple."]) continue;
+                NSString *name = p.localizedName ?: bid;
+                [list addObject:@{ @"bid": bid, @"name": name,
+                                   @"icon": [NSNull null],
+                                   @"scheme": [self ksSchemeOfProxy:p] }];
+            }
+        }
+        // 通道3：扫盘
+        if (list.count == 0) [list addObjectsFromArray:ksScanDiskApps(diag)];
+    } @catch (NSException *e) {
+        [diag addObject:[NSString stringWithFormat:@"异常:%@", e.reason ?: @""]];
+    }
     [list sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"name"] compare:b[@"name"]];
     }];
     _apps = list;
+    _filtered = [list mutableCopy];
+    _diag = [diag componentsJoinedByString:@" "];
     _selectedBid = KSPrefDict()[@"quickActionBundleId"];
     if (![_selectedBid isKindOfClass:[NSString class]]) _selectedBid = nil;
 }
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
-    return _apps.count ? _apps.count : 1; // 空列表显示一行提示
+    return _filtered.count ? _filtered.count : 1; // 空列表显示一行诊断提示
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"a" forIndexPath:ip];
-    if (_apps.count == 0) {
-        c.textLabel.text = @"未获取到 App 列表";
-        c.detailTextLabel.text = nil;
+    if (_filtered.count == 0) {
+        c.textLabel.text = @"未获取到 App 列表（截图这行字给开发者）";
+        c.textLabel.numberOfLines = 0;
+        c.detailTextLabel.text = _diag ?: nil; // 各通道诊断结果
+        c.detailTextLabel.numberOfLines = 0;
+        c.detailTextLabel.font = [UIFont systemFontOfSize:11];
+        c.detailTextLabel.textColor = [UIColor secondaryLabelColor];
         c.imageView.image = nil;
         c.accessoryType = UITableViewCellAccessoryNone;
         return c;
     }
-    NSDictionary *a = _apps[ip.row];
+    NSDictionary *a = _filtered[ip.row];
     c.textLabel.text = a[@"name"];
+    c.textLabel.numberOfLines = 1;
     NSString *scheme = a[@"scheme"];
     c.detailTextLabel.text = scheme.length ? [scheme stringByAppendingString:@"://"] : @"无 URL Scheme，不可选";
+    c.detailTextLabel.numberOfLines = 1;
+    c.detailTextLabel.font = nil;
     c.detailTextLabel.textColor = scheme.length ? [UIColor secondaryLabelColor] : [UIColor systemRedColor];
     UIImage *icon = a[@"icon"];
     if (![icon isKindOfClass:[UIImage class]]) {
-        // 扫盘兜底条目无图标：cell 复用时懒加载一次
+        // 扫盘/代理兜底条目无图标：cell 复用时懒加载一次
         if ([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:)])
             icon = [UIImage _applicationIconImageForBundleIdentifier:a[@"bid"] format:2];
         if ([icon isKindOfClass:[UIImage class]]) {
             NSMutableDictionary *m = [a mutableCopy];
             m[@"icon"] = icon;
-            [_apps replaceObjectAtIndex:ip.row withObject:m];
+            NSUInteger ai = [_apps indexOfObject:a];
+            if (ai != NSNotFound) [_apps replaceObjectAtIndex:ai withObject:m];
+            [_filtered replaceObjectAtIndex:ip.row withObject:m];
         }
     }
     if ([icon isKindOfClass:[UIImage class]]) c.imageView.image = icon;
@@ -651,8 +724,8 @@ static NSArray *ksScanDiskApps(void) {
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    if (_apps.count == 0 || ip.row >= (NSInteger)_apps.count) return;
-    NSDictionary *a = _apps[ip.row];
+    if (_filtered.count == 0 || ip.row >= (NSInteger)_filtered.count) return;
+    NSDictionary *a = _filtered[ip.row];
     NSString *scheme = a[@"scheme"];
     if (![scheme isKindOfClass:[NSString class]] || !scheme.length) return; // 无 scheme 的不可选
     _selectedBid = a[@"bid"];
