@@ -637,9 +637,9 @@ static NSArray *ksScanDiskApps(NSMutableArray *diag) {
         }
         [diag addObject:[NSString stringWithFormat:@"WS:%@", wsCls ? @"有" : @"无"]];
         if (wsCls) {
-            LSApplicationWorkspace *ws = [(LSApplicationWorkspace *)wsCls defaultWorkspace];
+            id ws = [(id)wsCls defaultWorkspace]; // 类方法：receiver 必须 id/Class 才匹配 +defaultWorkspace
             [diag addObject:[NSString stringWithFormat:@"wsObj:%@", ws ? @"有" : @"无"]];
-            NSArray *all = [ws allInstalledApplications];
+            NSArray *all = [(LSApplicationWorkspace *)ws allInstalledApplications];
             [diag addObject:[NSString stringWithFormat:@"ws:%lu", (unsigned long)all.count]];
             for (id p in all) {
                 @try {
