@@ -69,7 +69,9 @@ static NSDictionary *ksBtnSpecs(void) {
     };
 }
 
-@interface KSPreviewCell : UITableViewCell
+// PSCustomCell 的 cellClass 必须继承 PSTableCell：Preferences 创建 cell 后会调用
+// setSpecifier: 等 PSTableCell 方法，纯 UITableViewCell 会 unrecognized selector → 点面板闪退
+@interface KSPreviewCell : PSTableCell
 @end
 
 @implementation KSPreviewCell {
@@ -96,7 +98,7 @@ static NSDictionary *ksBtnSpecs(void) {
 }
 
 // PSCustomCell 可能走这个 init（双保险，两个都实现）
-- (instancetype)initWithSpecifier:(id)specifier {
+- (instancetype)initWithSpecifier:(PSSpecifier *)specifier {
     self = [self initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     return self;
 }
