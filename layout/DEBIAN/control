@@ -6,4 +6,4 @@ Depends: firmware (>= 16.0), mobilesubstrate, preferenceloader
 Maintainer: yzdmm
 Author: yzdmm
 Section: Tweaks
-Description: 在系统键盘底部显示只读状态条（时间/电量/剪贴板/网络）。rootless 适配，安全不崩。
+Description: 系统键盘底栏加功能按钮（全选/剪切/粘贴/光标移动/剪贴板历史/快捷短语/收起键盘）+ 可选状态条。rootless 适配，逐功能可关，安全不崩。
