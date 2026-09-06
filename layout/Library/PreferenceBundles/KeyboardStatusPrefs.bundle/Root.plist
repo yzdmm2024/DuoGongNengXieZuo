@@ -139,6 +139,20 @@
 			<string>快捷启动按钮</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>showAI</string>
+			<key>label</key>
+			<string>AI 按钮（长按弹菜单）</string>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSCustomCell</string>
 			<key>cellClass</key>
@@ -149,6 +163,226 @@
 			<string>按钮排序（点击进入，拖动 ≡ 调整顺序）</string>
 			<key>menu</key>
 			<string>order</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>预置模型已填好接口地址和模型名，只需填 API Key；选「自定义」后接口地址与模型名可自行修改（OpenAI 兼容格式，适配 GLM/豆包/通义/Ollama/中转）。</string>
+			<key>label</key>
+			<string>AI 大模型</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiEnabled</string>
+			<key>label</key>
+			<string>启用 AI 按钮（总开关）</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>ValidTitles</key>
+			<array>
+				<string>智谱 GLM-5.3-Flash（预置）</string>
+				<string>智谱 GLM-5.3（预置）</string>
+				<string>自定义 OpenAI 兼容接口</string>
+			</array>
+			<key>ValidValues</key>
+			<array>
+				<string>0</string>
+				<string>1</string>
+				<string>2</string>
+			</array>
+			<key>cell</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>default</key>
+			<string>0</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiPreset</string>
+			<key>title</key>
+			<string>AI 模型</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>isSecureTextEntry</key>
+			<true/>
+			<key>key</key>
+			<string>aiApiKey</string>
+			<key>label</key>
+			<string>API Key</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>https://open.bigmodel.cn/api/paas/v4/chat/completions</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiBaseURL</string>
+			<key>label</key>
+			<string>API 接口地址(base_url)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>glm-5.3-flash</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiModel</string>
+			<key>label</key>
+			<string>模型名称(model)</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSCustomCell</string>
+			<key>cellClass</key>
+			<string>KSSliderCell</string>
+			<key>default</key>
+			<real>0.7</real>
+			<key>height</key>
+			<real>44.0</real>
+			<key>key</key>
+			<string>aiTemp</string>
+			<key>label</key>
+			<string>Temperature 温度</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>ValidTitles</key>
+			<array>
+				<string>润色改写</string>
+				<string>精简压缩</string>
+				<string>扩写内容</string>
+				<string>总结摘要</string>
+				<string>提取要点</string>
+				<string>语病纠错</string>
+				<string>解释文本</string>
+				<string>翻译-中译英</string>
+				<string>翻译-英译中</string>
+				<string>翻译-中日互译</string>
+				<string>代码优化/报错分析</string>
+				<string>自定义模板 1</string>
+				<string>自定义模板 2</string>
+			</array>
+			<key>ValidValues</key>
+			<array>
+				<string>polish</string>
+				<string>brief</string>
+				<string>expand</string>
+				<string>summary</string>
+				<string>points</string>
+				<string>fix</string>
+				<string>explain</string>
+				<string>z2e</string>
+				<string>e2z</string>
+				<string>ja</string>
+				<string>code</string>
+				<string>custom1</string>
+				<string>custom2</string>
+			</array>
+			<key>cell</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>default</key>
+			<string>polish</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiDefaultAction</string>
+			<key>title</key>
+			<string>默认单击动作</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>ValidTitles</key>
+			<array>
+				<string>直接替换选中的文本</string>
+				<string>在光标后追加结果，保留原文</string>
+			</array>
+			<key>ValidValues</key>
+			<array>
+				<string>0</string>
+				<string>1</string>
+			</array>
+			<key>cell</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>default</key>
+			<string>0</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiOutputMode</string>
+			<key>title</key>
+			<string>输出行为</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>KSAITestCell</string>
+			<key>cellClass</key>
+			<string>KSAITestCell</string>
+			<key>height</key>
+			<real>44.0</real>
+			<key>label</key>
+			<string>🧪 AI 连通性测试</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>模板里用 {{text}} 代表选中的文字，填写后长按 AI 菜单底部会出现对应条目。例：把下面文本改成正式书面语气：{{text}}</string>
+			<key>label</key>
+			<string>自定义 Prompt 模板（高级）</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiCustomPrompt1</string>
+			<key>label</key>
+			<string>自定义模板 1</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.yzdmm.keyboardstatus.prefschanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>aiCustomPrompt2</string>
+			<key>label</key>
+			<string>自定义模板 2</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -296,6 +530,6 @@
 		</dict>
 	</array>
 	<key>title</key>
-	<string>键盘下方状态 1.1.1</string>
+	<string>键盘下方状态 1.2.0</string>
 </dict>
 </plist>

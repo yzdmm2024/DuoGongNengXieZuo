@@ -90,7 +90,8 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 static NSArray *ksDefaultButtonOrder(void) {
     return @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-             @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction"];
+             @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
+             @"showAI"];
 }
 
 // 用户自定义顺序（toolbarOrder）与默认顺序合并：非法/缺失项按默认补齐
@@ -117,6 +118,7 @@ static NSDictionary *ksBtnSpecs(void) {
         @"showCursor":     @[@"arrow.right", @"→"],
         @"showDismiss":    @[@"keyboard.chevron.compact.down", @"收"],
         @"showQuickAction":@[@"rectangle.stack", @"切"],
+        @"showAI":         @[@"sparkles", @"AI"],
     };
 }
 
@@ -201,10 +203,11 @@ static NSDictionary *ksBtnSpecs(void) {
                 if (b) [_bar addArrangedSubview:b];
                 continue;
             }
-            BOOL def = [k isEqualToString:@"showQuickAction"] ? NO : YES;
+            BOOL def = [k isEqualToString:@"showQuickAction"] || [k isEqualToString:@"showAI"] ? NO : YES;
             if (!KSBool(k, def)) continue;
+            if ([k isEqualToString:@"showAI"] && !KSBool(@"aiEnabled", NO)) continue; // AI 总开关关闭不显示
             if ([k isEqualToString:@"showClipboard"] || [k isEqualToString:@"showDismiss"]
-                || [k isEqualToString:@"showQuickAction"]) {
+                || [k isEqualToString:@"showQuickAction"] || [k isEqualToString:@"showAI"]) {
                 KSPREV_SEP();
             }
             NSArray *sf_fb = specs[k];
@@ -248,7 +251,7 @@ static NSDictionary *ksBtnSpecs(void) {
         // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4);
         NSString *orderSig = [ksFinalButtonOrder() componentsJoinedByString:@","];
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d%d",
             iconSize, spacing, orderSig,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
             KSBool(@"showSelectAll", YES) ? 1 : 0,
@@ -258,7 +261,8 @@ static NSDictionary *ksBtnSpecs(void) {
             KSBool(@"showPhrases", YES) ? 1 : 0,
             KSBool(@"showCursor", YES) ? 1 : 0,
             KSBool(@"showDismiss", YES) ? 1 : 0,
-            KSBool(@"showQuickAction", NO) ? 1 : 0];
+            KSBool(@"showQuickAction", NO) ? 1 : 0,
+            (KSBool(@"showAI", NO) && KSBool(@"aiEnabled", NO)) ? 1 : 0];
         if (![sig isEqualToString:_builtSig]) {
             _builtSig = sig;
             [self rebuildBar];
@@ -410,7 +414,7 @@ static NSDictionary *ksBtnSpecs(void) {
         _names = @{@"showSelectAll": @"全选", @"showCut": @"剪切", @"showPaste": @"粘贴",
                    @"showClipboard": @"剪贴板历史", @"showPhrases": @"快捷短语",
                    @"showCursor": @"光标左右移", @"showDismiss": @"收起键盘",
-                   @"showQuickAction": @"快捷启动"};
+                   @"showQuickAction": @"快捷启动", @"showAI": @"AI 按钮"};
         _keys = [ksFinalButtonOrder() mutableCopy];
     }
     return self;
@@ -647,6 +651,162 @@ static NSDictionary *ksBtnSpecs(void) {
             [owner presentViewController:nav animated:YES completion:nil];
         }
     } @catch (NSException *e) {}
+}
+
+@end
+
+#pragma mark - AI 连通性测试 cell（点击发一条测试消息，弹窗显示结果）
+
+static void ksAIPreset(NSInteger preset, NSString **urlOut, NSString **modelOut) {
+    if (preset == 1) {
+        *urlOut = @"https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        *modelOut = @"glm-5.3";
+    } else if (preset == 2) {
+        id u = KSPrefDict()[@"aiBaseURL"];
+        id m = KSPrefDict()[@"aiModel"];
+        *urlOut = [u isKindOfClass:[NSString class]] ? u : @"";
+        *modelOut = [m isKindOfClass:[NSString class]] ? m : @"";
+    } else {
+        *urlOut = @"https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        *modelOut = @"glm-5.3-flash";
+    }
+}
+
+@interface KSAITestCell : PSTableCell
+@end
+
+@implementation KSAITestCell {
+    PSSpecifier *_spec;
+    BOOL _running;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
+    self = [super initWithStyle:style reuseIdentifier:rid];
+    if (self) {
+        self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    }
+    return self;
+}
+
+- (void)setSpecifier:(PSSpecifier *)spec {
+    [super setSpecifier:spec];
+    _spec = spec;
+    self.textLabel.text = @"🧪 AI 连通性测试";
+    self.detailTextLabel.text = @"点此发送测试消息，验证 API Key 与接口";
+    self.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+}
+
+- (UIViewController *)ksOwningVC {
+    UIResponder *r = self.nextResponder;
+    while (r && ![r isKindOfClass:[UIViewController class]]) r = r.nextResponder;
+    return (UIViewController *)r;
+}
+
+- (void)ksShowResult:(NSString *)title message:(NSString *)msg {
+    UIViewController *vc = [self ksOwningVC];
+    if (!vc) return;
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:msg
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [vc presentViewController:a animated:YES completion:nil];
+}
+
+- (void)ksTest {
+    if (_running) return;
+    @try {
+        NSDictionary *d = KSPrefDict();
+        NSString *key = d[@"aiApiKey"];
+        if (![key isKindOfClass:[NSString class]]) key = nil;
+        if (key.length == 0) {
+            [self ksShowResult:@"缺少 API Key" message:@"请先在上方「API Key」填入你的密钥"];
+            return;
+        }
+        NSInteger preset = 0;
+        id pv = d[@"aiPreset"];
+        if ([pv isKindOfClass:[NSNumber class]]) preset = [pv integerValue];
+        else if ([pv isKindOfClass:[NSString class]]) preset = [(NSString *)pv integerValue];
+        NSString *url = nil, *model = nil;
+        ksAIPreset(preset, &url, &model);
+        if (url.length == 0 || model.length == 0) {
+            [self ksShowResult:@"自定义接口未填完整" message:@"请填写「API 接口地址」和「模型名称」"];
+            return;
+        }
+        CGFloat temp = 0.7;
+        id tv = d[@"aiTemp"];
+        if ([tv isKindOfClass:[NSNumber class]]) temp = [tv floatValue];
+
+        _running = YES;
+        self.detailTextLabel.text = @"测试中…";
+        NSMutableDictionary *body = [NSMutableDictionary dictionary];
+        body[@"model"] = model;
+        body[@"temperature"] = @(temp);
+        body[@"messages"] = @[ @{ @"role": @"user", @"content": @"你好，只回复四个字：连接成功" } ];
+        NSData *data = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+        req.HTTPMethod = @"POST";
+        req.HTTPBody = data;
+        req.timeoutInterval = 30;
+        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", key] forHTTPHeaderField:@"Authorization"];
+
+        __weak typeof(self) wself = self;
+        [[NSURLSession sharedSession] dataTaskWithRequest:req
+            completionHandler:^(NSData *dt, NSURLResponse *r, NSError *e) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(wself) sself = wself;
+                if (!sself) return;
+                sself->_running = NO;
+                sself.detailTextLabel.text = @"点此发送测试消息，验证 API Key 与接口";
+                @try {
+                    if (e) { [sself ksShowResult:@"❌ 连接失败" message:e.localizedDescription]; return; }
+                    NSInteger code = [(NSHTTPURLResponse *)r statusCode];
+                    id json = dt ? [NSJSONSerialization JSONObjectWithData:dt options:0 error:nil] : nil;
+                    if (code != 200) {
+                        NSString *m = @"服务端错误";
+                        id errObj = [json isKindOfClass:[NSDictionary class]] ? json[@"error"] : nil;
+                        if ([errObj isKindOfClass:[NSDictionary class]]) {
+                            id mm = errObj[@"message"];
+                            if ([mm isKindOfClass:[NSString class]]) m = mm;
+                        }
+                        [sself ksShowResult:[NSString stringWithFormat:@"❌ HTTP %ld", (long)code] message:m];
+                        return;
+                    }
+                    NSString *out = nil;
+                    if ([json isKindOfClass:[NSDictionary class]]) {
+                        id ch = json[@"choices"];
+                        if ([ch isKindOfClass:[NSArray class]] && [ch count] > 0) {
+                            id msg = ch[0][@"message"];
+                            if ([msg isKindOfClass:[NSDictionary class]]) {
+                                id c = msg[@"content"];
+                                if ([c isKindOfClass:[NSString class]]) out = c;
+                            }
+                        }
+                    }
+                    if (out.length) {
+                        [sself ksShowResult:@"✅ 连接成功"
+                                    message:[NSString stringWithFormat:@"模型 %@ 回复：%@", model, out]];
+                    } else {
+                        [sself ksShowResult:@"⚠️ 返回异常" message:@"未解析到回复内容"];
+                    }
+                } @catch (NSException *ex) {
+                    sself->_running = NO;
+                    [sself ksShowResult:@"❌ 异常" message:ex.reason ?: @"解析失败"];
+                }
+            });
+        }] resume;
+    } @catch (NSException *e) {
+        _running = NO;
+        [self ksShowResult:@"❌ 异常" message:e.reason ?: @"测试失败"];
+    }
+}
+
+// 双通道触发（与 KSMenuCell 同款：走 setSelected 选中触发更可靠）
+- (void)setSelected:(BOOL)selected animated:(BOOL)animated {
+    [super setSelected:selected animated:animated];
+    if (selected) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(ksTest) object:nil];
+        [self performSelector:@selector(ksTest) withObject:nil afterDelay:0.05];
+    }
 }
 
 @end

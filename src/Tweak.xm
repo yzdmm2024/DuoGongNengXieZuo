@@ -358,6 +358,336 @@ static void ksActDismiss(id s, SEL _c) {
     } @catch (NSException *e) {}
 }
 
+#pragma mark - AI 按钮（OpenAI 兼容接口：单击默认动作 / 长按菜单）
+
+// 预置模型：0=智谱 GLM-5.3-Flash，1=智谱 GLM-5.3，2=自定义（读 aiBaseURL/aiModel）
+static void ksAIEndpoint(NSString **urlOut, NSString **modelOut) {
+    NSInteger preset = 0;
+    id pv = KSCopyPref(@"aiPreset");
+    if ([pv isKindOfClass:[NSNumber class]]) preset = [pv integerValue];
+    else if ([pv isKindOfClass:[NSString class]]) preset = [(NSString *)pv integerValue];
+    if (preset == 1) {
+        *urlOut = @"https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        *modelOut = @"glm-5.3";
+    } else if (preset == 2) {
+        id u = KSCopyPref(@"aiBaseURL");
+        id m = KSCopyPref(@"aiModel");
+        *urlOut  = [u isKindOfClass:[NSString class]] ? u : @"";
+        *modelOut = [m isKindOfClass:[NSString class]] ? m : @"";
+    } else {
+        *urlOut = @"https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        *modelOut = @"glm-5.3-flash";
+    }
+}
+
+// 内置动作模板（唯一 %@ = 选中文本）
+static NSString *ksAIBuiltinPrompt(NSString *act) {
+    NSDictionary *m = @{
+        @"polish":  @"请润色改写下面的文本，保持原意、语句通顺，只输出改写结果，不要任何解释：\n\n%@\n",
+        @"brief":   @"请精简压缩下面的文本，保留核心信息，只输出结果，不要解释：\n\n%@\n",
+        @"expand":  @"请扩写下面的文本，使内容更丰富具体，只输出扩写结果：\n\n%@\n",
+        @"summary": @"请总结下面文本的要点，输出简明摘要：\n\n%@\n",
+        @"points":  @"请提取下面文本的关键要点，用简洁列表输出：\n\n%@\n",
+        @"fix":     @"请纠正下面文本中的错别字和语病，只输出修正后的文本：\n\n%@\n",
+        @"explain": @"请用通俗易懂的语言解释下面的文本：\n\n%@\n",
+        @"z2e":     @"请把下面的中文翻译成英文，只输出译文：\n\n%@\n",
+        @"e2z":     @"请把下面的英文翻译成中文，只输出译文：\n\n%@\n",
+        @"ja":      @"请把下面的文本在中文与日文之间互译（中文译成日文，日文译成中文），只输出译文：\n\n%@\n",
+        @"code":    @"你是一名资深程序员。请分析下面的代码或报错信息，给出优化后的代码或排查解决步骤：\n\n%@\n",
+    };
+    return m[act];
+}
+
+static NSString *ksAITitle(NSString *act) {
+    NSDictionary *m = @{
+        @"polish": @"✨ 润色改写", @"brief": @"✂️ 精简压缩", @"expand": @"📝 扩写内容",
+        @"summary": @"📋 总结摘要", @"points": @"🔖 提取要点", @"fix": @"🩹 语病纠错",
+        @"explain": @"💬 解释文本", @"z2e": @"🌐 中译英", @"e2z": @"🌐 英译中",
+        @"ja": @"🌐 中日互译", @"code": @"💻 代码优化/报错分析",
+        @"custom1": @"⭐ 自定义模板 1", @"custom2": @"⭐ 自定义模板 2",
+    };
+    return m[act] ?: act;
+}
+
+// 面板进程/宿主进程通用轻提示（黑底圆角，1.4s 自动消失）
+static void ksToast(NSString *msg) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIWindow *w = ksKeyWindow();
+            if (!w) return;
+            UILabel *l = [[UILabel alloc] init];
+            l.text = msg;
+            l.font = [UIFont systemFontOfSize:14];
+            l.textColor = UIColor.whiteColor;
+            l.textAlignment = NSTextAlignmentCenter;
+            l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.8];
+            l.layer.cornerRadius = 10;
+            l.layer.masksToBounds = YES;
+            CGFloat pad = 16.0;
+            CGSize sz = [l sizeThatFits:CGSizeMake(w.bounds.size.width - 60, CGFLOAT_MAX)];
+            l.frame = CGRectMake((w.bounds.size.width - sz.width - pad * 2) / 2,
+                                 w.bounds.size.height * 0.35, sz.width + pad * 2, sz.height + 20);
+            [w addSubview:l];
+            [UIView animateWithDuration:0.2 animations:^{ l.alpha = 0; } completion:^(BOOL fin) {
+                l.alpha = 1;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.4 * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                    [UIView animateWithDuration:0.3 animations:^{ l.alpha = 0; }
+                        completion:^(BOOL f2){ [l removeFromSuperview]; }];
+                });
+            }];
+        } @catch (NSException *e) {}
+    });
+}
+
+// loading：按钮转圈 + 保存请求 task（点按钮 = 取消）
+static char kKSTaskKey;
+static void ksAISetLoading(UIButton *btn, BOOL loading) {
+    @try {
+        if (!btn) return;
+        UIActivityIndicatorView *sp = objc_getAssociatedObject(btn, @selector(ksAIIsLoading));
+        if (loading) {
+            if (!sp) {
+                sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+                sp.translatesAutoresizingMaskIntoConstraints = NO;
+                [btn addSubview:sp];
+                [NSLayoutConstraint activateConstraints:@[
+                    [sp.centerXAnchor constraintEqualToAnchor:btn.centerXAnchor],
+                    [sp.centerYAnchor constraintEqualToAnchor:btn.centerYAnchor],
+                ]];
+                objc_setAssociatedObject(btn, @selector(ksAIIsLoading), sp, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            btn.imageView.hidden = YES;
+            btn.alpha = 0.5;
+            [sp startAnimating];
+        } else {
+            btn.imageView.hidden = NO;
+            btn.alpha = 1.0;
+            [sp stopAnimating];
+            sp.hidden = YES;
+            objc_setAssociatedObject(btn, &kKSTaskKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    } @catch (NSException *e) {}
+}
+
+static BOOL ksAIIsLoading(UIButton *btn) {
+    UIActivityIndicatorView *sp = objc_getAssociatedObject(btn, @selector(ksAIIsLoading));
+    return sp && !sp.hidden;
+}
+
+// 发请求：prompt → 回调主线程 (result|nil, err|nil)，返回 task 供取消
+static NSURLSessionDataTask *ksAIRequest(NSString *prompt, void (^done)(NSString *result, NSString *err)) {
+    @try {
+        NSString *url = nil, *model = nil;
+        ksAIEndpoint(&url, &model);
+        id key = KSCopyPref(@"aiApiKey");
+        if (![key isKindOfClass:[NSString class]]) key = nil;
+        if (url.length == 0 || model.length == 0 || key.length == 0) {
+            done(nil, @"AI 未配置完整：请到 设置→键盘下方状态→AI 大模型 填写 API Key 等参数");
+            return nil;
+        }
+        CGFloat temp = KSFloat(@"aiTemp", 0.7);
+        if (temp < 0) temp = 0; if (temp > 1) temp = 1;
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionary];
+        body[@"model"] = model;
+        body[@"temperature"] = @(temp);
+        body[@"messages"] = @[ @{ @"role": @"user", @"content": prompt } ];
+        NSData *data = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+        req.HTTPMethod = @"POST";
+        req.HTTPBody = data;
+        req.timeoutInterval = 60;
+        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", key] forHTTPHeaderField:@"Authorization"];
+
+        __block NSURLSessionDataTask *task;
+        task = [[NSURLSession sharedSession] dataTaskWithRequest:req
+            completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                @try {
+                    if (e) { done(nil, [NSString stringWithFormat:@"请求失败：%@", e.localizedDescription]); return; }
+                    NSInteger code = [(NSHTTPURLResponse *)r statusCode];
+                    id json = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+                    if (code != 200) {
+                        NSString *msg = @"服务端错误";
+                        if ([json isKindOfClass:[NSDictionary class]]) {
+                            id errObj = json[@"error"];
+                            if ([errObj isKindOfClass:[NSDictionary class]]) {
+                                id m = errObj[@"message"];
+                                if ([m isKindOfClass:[NSString class]]) msg = m;
+                            } else if ([errObj isKindOfClass:[NSString class]]) {
+                                msg = errObj;
+                            }
+                        }
+                        done(nil, [NSString stringWithFormat:@"HTTP %ld：%@", (long)code, msg]);
+                        return;
+                    }
+                    NSString *out = nil;
+                    if ([json isKindOfClass:[NSDictionary class]]) {
+                        id choices = json[@"choices"];
+                        if ([choices isKindOfClass:[NSArray class]] && [choices count] > 0) {
+                            id msg = choices[0][@"message"];
+                            if ([msg isKindOfClass:[NSDictionary class]]) {
+                                id c = msg[@"content"];
+                                if ([c isKindOfClass:[NSString class]]) out = c;
+                            }
+                        }
+                    }
+                    if (out.length == 0) done(nil, @"返回内容解析失败");
+                    else done(out, nil);
+                } @catch (NSException *ex) { done(nil, ex.reason ?: @"解析异常"); }
+            });
+        }];
+        [task resume];
+        return task;
+    } @catch (NSException *e) {
+        done(nil, e.reason ?: @"请求异常");
+        return nil;
+    }
+}
+
+// 执行动作：取选中文本 → 拼 prompt → loading → 请求 → 替换/追加
+static void ksAIExecute(NSString *act, UIButton *btn) {
+    @try {
+        if (!act.length) act = @"polish";
+        UIResponder *fr = ksFindFirstResponder();
+        if (!fr || ![fr conformsToProtocol:@protocol(UITextInput)]) {
+            ksToast(@"请先点进输入框再使用 AI");
+            return;
+        }
+        id<UITextInput> ti = (id<UITextInput>)fr;
+        NSString *sel = [ti textInRange:ti.selectedTextRange] ?: @"";
+        if (sel.length == 0) {
+            ksToast(@"请先选中要处理的文本");
+            return;
+        }
+        // 模板：内置动作走常量格式串；自定义模板用 {{text}} 替换（防用户模板里 % 引发格式崩溃）
+        NSString *prompt = nil;
+        NSString *builtin = ksAIBuiltinPrompt(act);
+        if (builtin) {
+            prompt = [NSString stringWithFormat:builtin, sel];
+        } else {
+            NSString *tpl = nil;
+            if ([act isEqualToString:@"custom1"]) tpl = KSCopyPref(@"aiCustomPrompt1");
+            else if ([act isEqualToString:@"custom2"]) tpl = KSCopyPref(@"aiCustomPrompt2");
+            if (![tpl isKindOfClass:[NSString class]] || tpl.length == 0) {
+                ksToast(@"该自定义模板为空，请到设置里填写");
+                return;
+            }
+            prompt = [tpl stringByReplacingOccurrencesOfString:@"{{text}}" withString:sel];
+        }
+        if (prompt.length == 0) return;
+
+        ksAISetLoading(btn, YES);
+        __block UIButton *b = btn;
+        NSURLSessionDataTask *task = ksAIRequest(prompt, ^(NSString *result, NSString *err) {
+            ksAISetLoading(b, NO);
+            if (err) { ksToast(err); return; }
+            if (!result) return;
+            @try {
+                id<UITextInput> t2 = (id<UITextInput>)ksFindFirstResponder();
+                if (!t2) return;
+                NSInteger outMode = 0;
+                id om = KSCopyPref(@"aiOutputMode");
+                if ([om isKindOfClass:[NSNumber class]]) outMode = [om integerValue];
+                else if ([om isKindOfClass:[NSString class]]) outMode = [(NSString *)om integerValue];
+                BOOL hasSel = [(id)t2 textInRange:t2.selectedTextRange].length > 0;
+                if (outMode == 1 || !hasSel) {
+                    // 模式 B：光标后追加（或选区已丢失的兜底）
+                    [(id<UITextInput>)t2 insertText:result];
+                } else {
+                    // 模式 A：直接替换选中文本
+                    [(id<UITextInput>)t2 replaceRange:t2.selectedTextRange withText:result];
+                }
+            } @catch (NSException *e) { ksToast(e.reason ?: @"写入失败"); }
+        });
+        objc_setAssociatedObject(btn, &kKSTaskKey, task, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } @catch (NSException *e) {
+        ksToast(e.reason ?: @"AI 执行异常");
+    }
+}
+
+// 单击：执行默认动作；loading 中 = 取消请求
+static void ksActAI(id s, SEL _c, id sender) {
+    @try {
+        UIButton *btn = (UIButton *)sender;
+        if ([btn isKindOfClass:[UIButton class]] && ksAIIsLoading(btn)) {
+            NSURLSessionDataTask *task = objc_getAssociatedObject(btn, &kKSTaskKey);
+            [task cancel];
+            ksAISetLoading(btn, NO);
+            ksToast(@"已取消 AI 请求");
+            return;
+        }
+        NSString *act = KSCopyPref(@"aiDefaultAction");
+        if (![act isKindOfClass:[NSString class]] || !act.length) act = @"polish";
+        ksAIExecute(act, btn);
+    } @catch (NSException *e) {}
+}
+
+// 长按：弹出功能菜单（翻译含二级子菜单）
+static void ksAILongPress(id s, SEL _c, UILongPressGestureRecognizer *g) {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    @try {
+        UIViewController *vc = ksTopViewController();
+        if (!vc) return;
+        UIButton *btn = (UIButton *)g.view;
+        if (![btn isKindOfClass:[UIButton class]]) btn = nil;
+
+        UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"✨AI处理"
+                                                                       message:nil
+                                                                preferredStyle:UIAlertControllerStyleActionSheet];
+        void (^run)(NSString *) = ^(NSString *act){ ksAIExecute(act, btn); };
+
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 润色改写" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"polish"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 精简压缩" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"brief"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 扩写内容" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"expand"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 总结摘要" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"summary"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 提取要点" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"points"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 语病纠错" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"fix"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 解释文本" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"explain"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 翻译 ▷" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){
+                UIAlertController *tr = [UIAlertController alertControllerWithTitle:@"翻译"
+                                                                            message:nil
+                                                                     preferredStyle:UIAlertControllerStyleActionSheet];
+                [tr addAction:[UIAlertAction actionWithTitle:@"中译英" style:UIAlertActionStyleDefault
+                    handler:^(UIAlertAction *x){ run(@"z2e"); }]];
+                [tr addAction:[UIAlertAction actionWithTitle:@"英译中" style:UIAlertActionStyleDefault
+                    handler:^(UIAlertAction *x){ run(@"e2z"); }]];
+                [tr addAction:[UIAlertAction actionWithTitle:@"中日互译" style:UIAlertActionStyleDefault
+                    handler:^(UIAlertAction *x){ run(@"ja"); }]];
+                [tr addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+                [vc presentViewController:tr animated:YES completion:nil];
+        }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"▫️ 💻 代码优化/报错分析" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){ run(@"code"); }]];
+        // 自定义模板（填写了才显示）
+        NSString *c1 = KSCopyPref(@"aiCustomPrompt1");
+        if ([c1 isKindOfClass:[NSString class]] && c1.length)
+            [sheet addAction:[UIAlertAction actionWithTitle:@"⭐ 自定义模板 1" style:UIAlertActionStyleDefault
+                handler:^(UIAlertAction *a){ run(@"custom1"); }]];
+        NSString *c2 = KSCopyPref(@"aiCustomPrompt2");
+        if ([c2 isKindOfClass:[NSString class]] && c2.length)
+            [sheet addAction:[UIAlertAction actionWithTitle:@"⭐ 自定义模板 2" style:UIAlertActionStyleDefault
+                handler:^(UIAlertAction *a){ run(@"custom2"); }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"⚙️ AI设置" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *a){
+                ksToast(@"请打开 设置 → 键盘下方状态 → AI 大模型 配置");
+        }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [vc presentViewController:sheet animated:YES completion:nil];
+    } @catch (NSException *e) {}
+}
+
 #pragma mark - Hook：键盘 dock（仅普通 App，不碰主屏幕/设置）
 
 @interface UIKeyboardDockView : UIView
@@ -388,7 +718,8 @@ static char kKSBtmKey;
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4); // 图标间隔
         // 自定义顺序（面板「按钮排序」写入 toolbarOrder；非法/缺项按默认补齐）
         NSArray *defOrder = @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-                              @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction"];
+                              @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
+                              @"showAI"];
         NSMutableArray *finalOrder = [NSMutableArray array];
         id savedOrder = KSCopyPref(@"toolbarOrder");
         if ([savedOrder isKindOfClass:[NSArray class]]) {
@@ -398,11 +729,11 @@ static char kKSBtmKey;
         for (NSString *k in defOrder)
             if (![finalOrder containsObject:k]) [finalOrder addObject:k];
         // 重建签名：图标大小 + 图标间隔 + 顺序 + 全部功能开关，任一变化都重建整个工具栏
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d|%d",
             iconSize, spacing, [finalOrder componentsJoinedByString:@","],
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
-            KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO)];
+            KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO), KSBool(@"showAI", NO)];
         UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
         if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
@@ -443,6 +774,17 @@ static char kKSBtmKey;
                 } else if ([k isEqualToString:@"showQuickAction"] && KSBool(k, NO)) {
                     [stack addArrangedSubview:ksSeparator()];
                     b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showAI"] && KSBool(k, NO) && KSBool(@"aiEnabled", NO)) {
+                    // AI 按钮：单击默认动作，长按弹功能菜单；总开关 aiEnabled 关闭时整个隐藏
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeButton(@"sparkles", @"AI", @selector(ksActAI:), self, iconSize);
+                    if (b) {
+                        UILongPressGestureRecognizer *lp =
+                            [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(ksAILongPress:)];
+                        lp.minimumPressDuration = 0.4;
+                        [b addGestureRecognizer:lp];
+                        [stack addArrangedSubview:b];
+                    }
                 }
             }
 
@@ -501,21 +843,23 @@ static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         ksPrefsChangedCB, CFSTR(KS_DARWIN_NOTI), NULL,
                                         CFNotificationSuspensionBehaviorDeliverImmediately);
-        struct { const char *name; IMP imp; } methods[] = {
-            {"ksActSelectAll",  (IMP)ksActSelectAll},
-            {"ksActCut",        (IMP)ksActCut},
-            {"ksActPaste",      (IMP)ksActPaste},
-            {"ksActCursorLeft", (IMP)ksActCursorLeft},
-            {"ksActCursorRight",(IMP)ksActCursorRight},
-            {"ksActClipboard",  (IMP)ksActClipboard},
-            {"ksActPhrases",    (IMP)ksActPhrases},
-            {"ksActDismiss",    (IMP)ksActDismiss},
-            {"ksActQuickLaunch",(IMP)ksActQuickLaunch},
+        struct { const char *name; IMP imp; const char *types; } methods[] = {
+            {"ksActSelectAll",  (IMP)ksActSelectAll, "v@:"},
+            {"ksActCut",        (IMP)ksActCut, "v@:"},
+            {"ksActPaste",      (IMP)ksActPaste, "v@:"},
+            {"ksActCursorLeft", (IMP)ksActCursorLeft, "v@:"},
+            {"ksActCursorRight",(IMP)ksActCursorRight, "v@:"},
+            {"ksActClipboard",  (IMP)ksActClipboard, "v@:"},
+            {"ksActPhrases",    (IMP)ksActPhrases, "v@:"},
+            {"ksActDismiss",    (IMP)ksActDismiss, "v@:"},
+            {"ksActQuickLaunch",(IMP)ksActQuickLaunch, "v@:"},
+            {"ksActAI:",        (IMP)ksActAI, "v@:@"},          // 带 sender（loading/取消）
+            {"ksAILongPress:",  (IMP)ksAILongPress, "v@:@"},    // 长按手势
         };
         for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
             SEL sel = sel_registerName(methods[i].name);
-            if (!class_addMethod(cls, sel, methods[i].imp, "v@:"))
-                class_replaceMethod(cls, sel, methods[i].imp, "v@:");
+            if (!class_addMethod(cls, sel, methods[i].imp, methods[i].types))
+                class_replaceMethod(cls, sel, methods[i].imp, methods[i].types);
         }
     }
 }
