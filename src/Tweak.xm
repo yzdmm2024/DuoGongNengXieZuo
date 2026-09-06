@@ -480,8 +480,8 @@ static NSURLSessionDataTask *ksAIRequest(NSString *prompt, void (^done)(NSString
     @try {
         NSString *url = nil, *model = nil;
         ksAIEndpoint(&url, &model);
-        id key = KSCopyPref(@"aiApiKey");
-        if (![key isKindOfClass:[NSString class]]) key = nil;
+        id kv = KSCopyPref(@"aiApiKey");
+        NSString *key = [kv isKindOfClass:[NSString class]] ? kv : nil;
         if (url.length == 0 || model.length == 0 || key.length == 0) {
             done(nil, @"AI 未配置完整：请到 设置→键盘下方状态→AI 大模型 填写 API Key 等参数");
             return nil;
