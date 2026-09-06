@@ -5,7 +5,10 @@
 # SDK 14.5（theos/sdks）：新 Xcode SDK 已不带私有框架 tbd（Preferences 等），
 # 链接 Preferences.framework 必须用老 SDK；deployment 14.0 不影响跑 16.6.1
 TARGET := iphone:clang:14.5:14.0
-ARCHS = arm64
+# 关键：arm64e 设备（A14）上系统进程（设置）跑 arm64e，prefs bundle 必须双架构，
+# 纯 arm64 在设置里报「已损坏或丢失必要的资源」（SpringBoard 实测 cpusub=0x80000002）；
+# tweak 注入的是普通 App（arm64 进程），所以按钮一直正常
+ARCHS = arm64 arm64e
 THEOS_PACKAGE_SCHEME = rootless
 INSTALL_TARGET_PROCESSES = SpringBoard
 
