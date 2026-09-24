@@ -24,18 +24,20 @@
 - 走既有越狱源发布流程（同 超级截图 / 隐私总开关）
 
 ## 指定注入的 App
-编辑 `layout/Library/MobileSubstrate/DynamicLibraries/KeyboardStatus.plist` 的 Bundles 数组，加入目标 App 的 bundle id 即可。
+默认注入所有 App（filter plist 不做过滤），系统关键进程（SpringBoard / 设置 / WebKit / 崩溃上报等）在 `%ctor` 里硬排除。要限定范围，编辑 `KeyboardStatus.plist` 的 `Filter → Bundles` 数组即可。
 
-## v1.4.0（iOS 17 / 第三方键盘适配）
-- **不再写死 `UIKeyboardDockView`**：改成运行时枚举所有类名带 `KeyboardDock` 的类并 swizzle，延迟加载 / iOS17 改名都能覆盖；找不到就每 3 秒重扫。
-- **兜底挂载**：一个 dock 实例都抓不到时（iOS17 上第三方键盘如微信输入法可能不走 dock），把工具栏挂到键盘窗口的输入容器上，保证至少能用。
-- **每次 layout 把工具栏 `bringSubviewToFront`**：第三方键盘的候选栏/辅助栏可能盖在我们上面。
-- **键盘弹出/收起通知**：触发补扫 + 刷新，dock 类晚加载也不怕。
-- **新增「诊断信息」**（设置页最下方）：显示最近一次弹键盘的 App 的运行状态——进程名、iOS 版本、偏好文件路径、读到的开关值、命中的 dock 类、dock 实例数、挂载位置、最近刷新时间。看不到数据 = 插件没注入那个 App；偏好文件显示「未找到」= 设置读写不通。
+## v1.5.0（性能回退 + 真修卡顿）
+v1.4.0 为了排查 iOS17 问题堆了一堆运行期检测，实测是负优化，本次全部移除，只保留真有用的修复：
+- **修「越来越卡」根因**：`layoutSubviews` 里读偏好近 20 次，旧实现每次都 `dictionaryWithContentsOfFile` 重读一遍 plist；键盘动画期间 layoutSubviews 每帧都跑 → 每秒上千次磁盘读 + plist 解析。现在整份偏好字典缓存 0.5 秒复用，收到面板通知立即作废（实时调节不受影响）。
+- **移除 0.6 秒偏好文件轮询**：darwin 通知 + 键盘每次 layout 重读已足够，定时器纯属白跑主线程。
+- **移除刷新时的窗口全树递归**：原来每次刷新都把所有窗口的整棵视图树走一遍（O(整棵树)），现在只对已登记的 dock 实例 `setNeedsLayout`。
+- **移除 3 秒全量类扫描 / 运行时 swizzle**：回到 theos 原生 `%hook UIKeyboardDockView`，零开销。附带修掉 1.4.0 最严重的 bug——模糊匹配 `KeyboardDock` 把 `UIKeyboardDockItemButton`（dock 上的每个按钮，UIButton 子类）也 hook 了，导致往每个按钮内部塞一整套工具栏，视图数量爆炸并破坏 UIButton 内部布局（部分 App 因此闪退）。
+- **修「改了设置键盘没反应」真因**：filter plist 用 `Classes: UIKeyboardDockView` 做过滤，在 ElleKit / RootHide 下时常不生效 → frida 实测插件根本没注入目标 App。改为不做过滤 + 代码内进程黑名单。
+- **移除诊断系统**（诊断文件写盘 + 设置页诊断 cell）：它是排查用的，留在正式版里只会持续消耗主线程 IO。
 
 ## v1.3.0 修复记录
 - **修「重装后改设置不生效」**：偏好文件路径旧实现用 `dispatch_once` 缓存，重装后首次启动 plist 还没建 → 缓存成 nil 且永不重试 → tweak 一辈子退回 CFPreferences 读值（读不到面板写的），所有开关看着都无效。现在命中才缓存，未命中 1 秒后重试。
 - **修「关了启用开关工具栏还在」**：根因同上（`enabled` 读不到 = 默认开）。另外关开关时改为递归摘除所有已挂工具栏，不再只摘一层。
-- **修「改设置要收起键盘才生效」**：改用 dock 实例登记表直接刷新（不再遍历窗口碰运气）+ 偏好文件 mtime 轮询兜底（0.6s），darwin 通知没送达也能实时跟随。
+- **修「改设置要收起键盘才生效」**：改用 dock 实例登记表（弱引用）直接刷新，不再遍历窗口碰运气。
 - **修「方法注入可能整体失效」**：`UIKeyboardDockView` 延迟加载时旧代码 `if(!cls) return` 会把通知监听一起跳过，现在监听无条件注册、方法注入改成懒注入。
 - **新增一键清空按钮**（单击清空当前输入框，长按撤销）。
