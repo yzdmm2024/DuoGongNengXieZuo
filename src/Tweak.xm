@@ -914,7 +914,7 @@ static void ksAILongPress(id s, SEL _c, UILongPressGestureRecognizer *g) {
 static void ksRefreshLayouts(UIView *root);
 static void ksRemoveToolbarsIn(UIView *root);
 static void ksRefreshDocks(void);
-static void ksScanDockClasses(void);
+static BOOL ksScanDockClasses(void);
 static void ksAttachFallbackIfNeeded(void);
 static UIView *ksFindViewByClass(UIView *root, NSString *part);
 static void ksStartPrefsPolling(void);
