@@ -1067,3 +1067,95 @@ static void ksAIPreset(NSInteger preset, NSString **urlOut, NSString **modelOut)
 }
 
 @end
+
+#pragma mark - 诊断信息 cell（读 tweak 写出的诊断文件，排查 iOS17 / 第三方键盘失效）
+
+static NSString *ksDiagFilePath(void) {
+    @try {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *name = @"com.yzdmm.keyboardstatus.diag.txt";
+        NSString *p = ksPrefsReadPath();
+        NSString *dir = p ? [p stringByDeletingLastPathComponent] : nil;
+        if (dir) return [dir stringByAppendingPathComponent:name];
+        for (NSString *r in ksJBRoots()) {
+            NSString *cand = [[r stringByAppendingPathComponent:@"var/mobile/Library/Preferences"]
+                                stringByAppendingPathComponent:name];
+            if ([fm fileExistsAtPath:cand]) return cand;
+        }
+        for (NSString *d in @[@"/var/jb/var/mobile/Library/Preferences",
+                              @"/private/var/mobile/Library/Preferences",
+                              @"/var/mobile/Library/Preferences"]) {
+            NSString *cand = [d stringByAppendingPathComponent:name];
+            if ([fm fileExistsAtPath:cand]) return cand;
+        }
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+@interface KSDiagCell : PSTableCell
+@end
+
+@implementation KSDiagCell {
+    UITextView *_tv;
+    NSTimer    *_timer;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
+    self = [super initWithStyle:style reuseIdentifier:rid];
+    if (self) {
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        self.backgroundColor = UIColor.clearColor;
+        _tv = [[UITextView alloc] init];
+        _tv.editable = NO;
+        _tv.selectable = YES;            // 允许长按复制给开发者
+        _tv.scrollEnabled = YES;
+        _tv.font = [UIFont systemFontOfSize:12];
+        _tv.textColor = [UIColor labelColor];
+        _tv.backgroundColor = UIColor.clearColor;
+        _tv.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:_tv];
+        [NSLayoutConstraint activateConstraints:@[
+            [_tv.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:12],
+            [_tv.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-12],
+            [_tv.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:4],
+            [_tv.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-4],
+        ]];
+        [self refresh];
+    }
+    return self;
+}
+
+- (instancetype)initWithSpecifier:(PSSpecifier *)spec {
+    return [self initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+}
+
+- (void)refresh {
+    @try {
+        NSString *p = ksDiagFilePath();
+        NSString *s = p ? [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil] : nil;
+        if (!s.length) {
+            s = @"暂无诊断数据。\n\n用法：去微信/备忘录弹一次键盘打几个字，再回到本页查看。\n"
+                 "• 一直没数据 = 插件没注入那个 App（查越狱工具的 App 注入白名单）\n"
+                 "• 偏好文件=未找到 = 设置读写不通（重装后常见）";
+        } else {
+            s = [s stringByAppendingString:@"\n（上面是最近一次弹键盘的 App 的运行状态，可复制发给开发者）"];
+        }
+        if (![_tv.text isEqualToString:s]) _tv.text = s;
+    } @catch (NSException *e) {}
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    @try {
+        if (self.window == nil) { [_timer invalidate]; _timer = nil; }
+        else if (!_timer) {
+            _timer = [NSTimer timerWithTimeInterval:1.5 target:self selector:@selector(refresh)
+                                           userInfo:nil repeats:YES];
+            [[NSRunLoop mainRunLoop] addTimer:_timer forMode:NSRunLoopCommonModes];
+        }
+    } @catch (NSException *e) {}
+}
+
+- (void)dealloc { [_timer invalidate]; _timer = nil; }
+
+@end

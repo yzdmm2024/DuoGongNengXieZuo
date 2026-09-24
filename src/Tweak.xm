@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#include <string.h>
+#include <stdlib.h>
 
 #pragma mark - 配置
 
@@ -141,6 +143,68 @@ static void KSSetPref(NSString *key, id value) {
         CFPreferencesSynchronize((__bridge CFStringRef)KS_SUITE,
                                  kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     } @catch (NSException *e) {}
+}
+
+#pragma mark - 诊断（写给面板「诊断信息」看：iOS17 / 第三方键盘失效时用它定位）
+
+static NSString *ksDiagFilePath(void) {
+    @try {
+        NSString *p = ksPrefsWritePath();
+        if (!p) return nil;
+        return [[p stringByDeletingLastPathComponent]
+                stringByAppendingPathComponent:@"com.yzdmm.keyboardstatus.diag.txt"];
+    } @catch (NSException *e) { return nil; }
+}
+
+// HH:mm:ss（不用 descriptionWithCalendarFormat: —— 那个 API 在 iOS SDK 里标了 unavailable）
+static NSString *ksTimeStr(void) {
+    static NSDateFormatter *fmt = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        fmt = [[NSDateFormatter alloc] init];
+        fmt.dateFormat = @"HH:mm:ss";
+    });
+    return [fmt stringFromDate:[NSDate date]] ?: @"";
+}
+
+static NSMutableDictionary *ksDiagDict(void) {
+    static NSMutableDictionary *d = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ d = [NSMutableDictionary dictionary]; });
+    return d;
+}
+
+static NSArray *ksDiagOrder(void) {
+    return @[@"进程", @"系统", @"偏好文件", @"开关", @"dock类", @"dock实例",
+             @"挂载位置", @"工具栏", @"最近刷新", @"更新时间"];
+}
+
+// 只写变化项，避免每次 layout 都写盘
+static void ksDiagSet(NSString *key, NSString *value) {
+    @try {
+        if (!key || !value) return;
+        NSString *old = ksDiagDict()[key];
+        if (old && [old isEqualToString:value]) return;
+        ksDiagDict()[key] = value;
+        NSString *p = ksDiagFilePath();
+        if (!p) return;
+        NSMutableString *s = [NSMutableString string];
+        for (NSString *k in ksDiagOrder()) {
+            NSString *v = ksDiagDict()[k];
+            if (v.length) [s appendFormat:@"%@：%@\n", k, v];
+        }
+        [s writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    } @catch (NSException *e) {}
+}
+
+static void ksDiagBase(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        ksDiagSet(@"进程", [NSString stringWithFormat:@"%@（%@）",
+                   [[NSProcessInfo processInfo] processName],
+                   [[NSBundle mainBundle] bundleIdentifier] ?: @"-"]);
+        ksDiagSet(@"系统", [UIDevice currentDevice].systemVersion);
+    });
 }
 
 #pragma mark - 剪贴板历史（内存缓存，进程内有效）
@@ -844,38 +908,41 @@ static void ksAILongPress(id s, SEL _c, UILongPressGestureRecognizer *g) {
     } @catch (NSException *e) {}
 }
 
-#pragma mark - Hook：键盘 dock（仅普通 App，不碰主屏幕/设置）
+#pragma mark - Hook：键盘 dock（iOS17 起不再写死类名：运行时枚举 + swizzle）
 
-@interface UIKeyboardDockView : UIView
-@end
-
-// 下方实现的刷新/登记/注入接口，前置声明供 hook 内调用
+// 下方实现的刷新/登记/注入接口，前置声明
 static void ksRefreshLayouts(UIView *root);
 static void ksRemoveToolbarsIn(UIView *root);
+static void ksRefreshDocks(void);
+static void ksScanDockClasses(void);
+static void ksAttachFallbackIfNeeded(void);
+static UIView *ksFindViewByClass(UIView *root, NSString *part);
 static void ksStartPrefsPolling(void);
 static void ksInstallMethods(Class cls);
 static NSHashTable *ksDockTable(void);
+static void ksDiagSet(NSString *key, NSString *value);
+static void ksDiagBase(void);
 
 // 工具栏构建尺寸 / 位置约束，用关联对象挂在 stack 上（每个 dock 实例独立）
 static char kKSBuiltSizeKey;
 static char kKSCXKey;
 static char kKSBtmKey;
 
-%hook UIKeyboardDockView
-
-- (void)layoutSubviews {
-    %orig;
+// 建/更新工具栏：container 可以是 dock，也可以是兜底的键盘容器
+static void ksUpdateToolbarIn(UIView *container) {
     @try {
-        KSSyncPrefs();  // 拿到设置里最新值（滑块改完，收起再拉起键盘即生效）
+        if (!container) return;
+        KSSyncPrefs();  // 每次都重读偏好文件（面板改完立刻能反映）
 
-        // 类延迟加载时 %ctor 可能没装上动作方法 → 这里补装（只装一次）
-        ksInstallMethods([self class]);
-        // 登记本实例 + 起文件轮询兜底：保证面板改值后无需收起键盘也能实时刷新
-        [ksDockTable() addObject:self];
-        ksStartPrefsPolling();
+        NSString *p = ksPrefsReadPath();
+        ksDiagSet(@"偏好文件", p ?: @"未找到！(设置读不到，改开关自然无效)");
+        ksDiagSet(@"开关", [NSString stringWithFormat:@"总=%d 栏=%d 清空=%d X=%.0f 抬=%.0f",
+                   KSBool(@"enabled", YES), KSBool(@"toolbarEnabled", YES),
+                   KSBool(@"showClear", YES), KSFloat(@"toolbarX", -25), KSFloat(@"toolbarLift", 35)]);
 
         if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
-            ksRemoveToolbarsIn(self);   // 关开关：递归清干净，不留残影
+            ksRemoveToolbarsIn(container);   // 关开关：递归清干净，不留残影
+            ksDiagSet(@"工具栏", @"已关闭（开关关着）");
             return;
         }
 
@@ -903,7 +970,7 @@ static char kKSBtmKey;
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
             KSBool(@"showDismiss", YES), KSBool(@"showClear", YES), KSBool(@"showQuickAction", NO),
             KSBool(@"showAI", NO)];
-        UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
+        UIStackView *stack = (UIStackView *)[container viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
         if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
             [stack removeFromSuperview];
@@ -918,49 +985,49 @@ static char kKSBtmKey;
             stack.alignment = UIStackViewAlignmentCenter;
             stack.spacing = spacing;
             stack.translatesAutoresizingMaskIntoConstraints = NO;
-            [self addSubview:stack];
+            [container addSubview:stack];
 
             UIButton *b;
             for (NSString *k in finalOrder) {
                 if ([k isEqualToString:@"showSelectAll"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showCut"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"scissors", @"剪", @selector(ksActCut), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"scissors", @"剪", @selector(ksActCut), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showPaste"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"doc.on.clipboard", @"粘", @selector(ksActPaste), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"doc.on.clipboard", @"粘", @selector(ksActPaste), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showClipboard"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showPhrases"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"text.quote", @"语", @selector(ksActPhrases), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"text.quote", @"语", @selector(ksActPhrases), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showCursor"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  self, iconSize); if (b) [stack addArrangedSubview:b];
-                    b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  container, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showDismiss"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showClear"] && KSBool(k, YES)) {
                     // 一键清空：单击清空当前输入框全部内容，长按撤销恢复
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"trash", @"清", @selector(ksActClear), self, iconSize);
+                    b = ksMakeButton(@"trash", @"清", @selector(ksActClear), container, iconSize);
                     if (b) {
                         UILongPressGestureRecognizer *lp =
-                            [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(ksClearLongPress:)];
+                            [[UILongPressGestureRecognizer alloc] initWithTarget:container action:@selector(ksClearLongPress:)];
                         lp.minimumPressDuration = 0.4;
                         [b addGestureRecognizer:lp];
                         [stack addArrangedSubview:b];
                     }
                 } else if ([k isEqualToString:@"showQuickAction"] && KSBool(k, NO)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), container, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showAI"] && KSBool(k, NO) && KSBool(@"aiEnabled", NO)) {
                     // AI 按钮：单击默认动作，长按弹功能菜单；总开关 aiEnabled 关闭时整个隐藏
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"sparkles", @"AI", @selector(ksActAI:), self, iconSize);
+                    b = ksMakeButton(@"sparkles", @"AI", @selector(ksActAI:), container, iconSize);
                     if (b) {
                         UILongPressGestureRecognizer *lp =
-                            [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(ksAILongPress:)];
+                            [[UILongPressGestureRecognizer alloc] initWithTarget:container action:@selector(ksAILongPress:)];
                         lp.minimumPressDuration = 0.4;
                         [b addGestureRecognizer:lp];
                         [stack addArrangedSubview:b];
@@ -968,8 +1035,8 @@ static char kKSBtmKey;
                 }
             }
 
-            NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor constant:offX];
-            NSLayoutConstraint *btm = [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-lift];
+            NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:container.centerXAnchor constant:offX];
+            NSLayoutConstraint *btm = [stack.bottomAnchor constraintEqualToAnchor:container.bottomAnchor constant:-lift];
             cx.active = YES; btm.active = YES;
             objc_setAssociatedObject(stack, &kKSBuiltSizeKey, sig, OBJC_ASSOCIATION_RETAIN);
             objc_setAssociatedObject(stack, &kKSCXKey,  cx,  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -981,10 +1048,85 @@ static char kKSBtmKey;
             cx.constant  = offX;
             btm.constant = -lift;
         }
+        // iOS17 + 第三方键盘（微信输入法）：键盘/候选栏的视图可能叠在我们上面 → 每次置顶
+        [container bringSubviewToFront:stack];
+        ksDiagSet(@"工具栏", @"已建");
+        static NSTimeInterval lastT = 0;                 // 时间戳最多 5 秒写一次盘，别每次 layout 都写
+        NSTimeInterval nowT = [[NSDate date] timeIntervalSinceReferenceDate];
+        if (nowT - lastT > 5.0) { lastT = nowT; ksDiagSet(@"更新时间", ksTimeStr()); }
     } @catch (NSException *e) {}
 }
 
-%end
+#pragma mark - dock 类发现 + swizzle（iOS17 类名/加载时机都不再假设）
+
+static NSMutableSet *ksHooked(void) {
+    static NSMutableSet *s = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ s = [NSMutableSet set]; });
+    return s;
+}
+
+// dock 每次 layout 都会走到这里
+static void ksDockDidLayout(UIView *dock) {
+    @try {
+        ksInstallMethods([dock class]);
+        [ksDockTable() addObject:dock];
+        ksStartPrefsPolling();
+        ksUpdateToolbarIn(dock);
+    } @catch (NSException *e) {}
+}
+
+static void ksHookDockClass(Class cls) {
+    if (!cls) return;
+    @try {
+        NSString *name = NSStringFromClass(cls);
+        if (name.length == 0 || [ksHooked() containsObject:name]) return;
+        SEL sel = @selector(layoutSubviews);
+        Method m = class_getInstanceMethod(cls, sel);
+        IMP orig = m ? method_getImplementation(m) : NULL;
+        if (!orig) {
+            Method sm = class_getInstanceMethod(class_getSuperclass(cls), sel);
+            orig = sm ? method_getImplementation(sm) : NULL;
+        }
+        IMP origCopy = orig;
+        void (^blk)(id) = ^(id v) {
+            if (origCopy) ((void (*)(id, SEL))origCopy)(v, sel);
+            @try { ksDockDidLayout((UIView *)v); } @catch (NSException *e) {}
+        };
+        IMP newImp = imp_implementationWithBlock(blk);
+        if (!class_addMethod(cls, sel, newImp, "v@:")) {
+            if (m) method_setImplementation(m, newImp);
+        }
+        [ksHooked() addObject:name];
+        ksInstallMethods(cls);
+        ksDiagSet(@"dock类", [[ksHooked() allObjects] componentsJoinedByString:@", "]);
+    } @catch (NSException *e) {}
+}
+
+// 枚举运行时所有类，凡名字里带 KeyboardDock 的都 hook（兼容 iOS17 改名/下划线前缀）
+static BOOL ksScanDockClasses(void) {
+    BOOL found = NO;
+    @try {
+        Class cls = NSClassFromString(@"UIKeyboardDockView");   // 先试正式名（命中就不用全量扫）
+        if (cls) { ksHookDockClass(cls); found = YES; }
+        int num = objc_getClassList(NULL, 0);
+        if (num > 0) {
+            Class *list = (Class *)malloc(sizeof(Class) * (unsigned)num);
+            if (list) {
+                num = objc_getClassList(list, num);
+                for (int i = 0; i < num; i++) {
+                    const char *cn = class_getName(list[i]);
+                    if (!cn) continue;
+                    if (strstr(cn, "KeyboardDock") == NULL) continue;
+                    ksHookDockClass(list[i]);
+                    found = YES;
+                }
+                free(list);
+            }
+        }
+    } @catch (NSException *e) {}
+    return found;
+}
 
 #pragma mark - darwin 通知：面板改值 → 实时刷新键盘（无需收起再拉起）
 
@@ -1010,20 +1152,88 @@ static void ksRemoveToolbarsIn(UIView *root) {
 
 static void ksRefreshDocks(void) {
     @try {
+        NSUInteger n = 0;
         for (UIView *d in [ksDockTable() allObjects]) {
             if (![d isKindOfClass:[UIView class]]) continue;
+            n++;
             if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) ksRemoveToolbarsIn(d);
             [d setNeedsLayout];
             [d layoutIfNeeded];
         }
-        // 兜底：登记表还没填（键盘没弹过）时，遍历窗口找 dock 刷一遍
+        ksDiagSet(@"dock实例", [NSString stringWithFormat:@"%lu", (unsigned long)n]);
+        // 兜底：登记表还没填（键盘没弹过 / dock 类名在 iOS17 上变了）时，遍历窗口找 dock 刷一遍
         for (UIWindow *w in ksAllWindows()) ksRefreshLayouts(w);
+        ksAttachFallbackIfNeeded();
+        ksDiagSet(@"最近刷新", ksTimeStr());
     } @catch (NSException *e) {}
+}
+
+// 兜底挂载：一个 dock 实例都没有（iOS17 上 dock 类名变了 / 第三方键盘不走 dock）时，
+// 直接把工具栏挂到键盘窗口里的输入容器上，至少保证能用
+static UIView *ksFindKeyboardContainer(void) {
+    @try {
+        for (UIWindow *w in ksAllWindows()) {
+            NSString *cn = NSStringFromClass([w class]);
+            if ([cn rangeOfString:@"TextEffects"].length == 0) continue;
+            UIView *hit = ksFindViewByClass(w, @"InputSetContainerView")
+                       ?: ksFindViewByClass(w, @"InputSetHostView")
+                       ?: ksFindViewByClass(w, @"InputSetUIView");
+            return hit ?: w;
+        }
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+// 兜底挂载用的容器（弱引用，键盘收起后自动失效）
+static __weak UIView *ksFallbackContainer = nil;
+static BOOL ksKeyboardVisible = NO;
+
+static void ksAttachFallbackIfNeeded(void) {
+    @try {
+        if ([ksDockTable() count] > 0) return;      // 有 dock 就走正常路径
+        if (!ksKeyboardVisible) return;             // 键盘没弹就别挂
+        UIView *c = ksFindKeyboardContainer();
+        if (!c) return;
+        ksInstallMethods([c class]);                 // 按钮 target 是容器，动作方法必须装上
+        ksUpdateToolbarIn(c);
+        ksFallbackContainer = c;
+        ksDiagSet(@"挂载位置", [NSString stringWithFormat:@"兜底:%@", NSStringFromClass([c class])]);
+    } @catch (NSException *e) {}
+}
+
+static void ksRemoveFallbackToolbar(void) {
+    @try {
+        UIView *c = ksFallbackContainer;
+        if (c) ksRemoveToolbarsIn(c);
+        ksFallbackContainer = nil;
+    } @catch (NSException *e) {}
+}
+
+static UIView *ksFindViewByClass(UIView *root, NSString *part) {
+    if (!root) return nil;
+    if ([NSStringFromClass([root class]) rangeOfString:part].length) return root;
+    for (UIView *v in root.subviews) {
+        UIView *hit = ksFindViewByClass(v, part);
+        if (hit) return hit;
+    }
+    return nil;
 }
 
 static void ksRefreshLayouts(UIView *root) {
     if ([root isKindOfClass:NSClassFromString(@"UIKeyboardDockView")]) { [root setNeedsLayout]; return; }
     for (UIView *sub in [root subviews]) ksRefreshLayouts(sub);
+}
+
+// 键盘弹出/收起：补一次类扫描 + 刷新（iOS17 上 dock 类可能这时候才加载）
+static void ksKeyboardEvent(NSString *noteName) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            ksKeyboardVisible = !([noteName rangeOfString:@"Hide"].length > 0);
+            ksScanDockClasses();
+            if (!ksKeyboardVisible) ksRemoveFallbackToolbar();
+            ksRefreshDocks();
+        } @catch (NSException *e) {}
+    });
 }
 
 static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
@@ -1062,12 +1272,15 @@ static void ksStartPrefsPolling(void) {
 
 #pragma mark - 注入按钮动作方法到 dock 类
 
-// 懒注入：类可能在 %ctor 时还没被加载（TextInput 私有框架延迟加载），
-// 旧版 if(!cls) return 会让通知监听和方法一起全部失效 → 改设置不生效
+// 按类注入一次（dock 类 + 兜底容器类都要装，按钮的 target 就是它们）
 static void ksInstallMethods(Class cls) {
-    static BOOL installed = NO;
-    if (!cls || installed) return;
-    installed = YES;
+    static NSMutableSet *done = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ done = [NSMutableSet set]; });
+    if (!cls) return;
+    NSString *cname = NSStringFromClass(cls);
+    if (cname.length == 0 || [done containsObject:cname]) return;
+    [done addObject:cname];
     struct { const char *name; IMP imp; const char *types; } methods[] = {
         {"ksActSelectAll",  (IMP)ksActSelectAll, "v@:"},
         {"ksActCut",        (IMP)ksActCut, "v@:"},
@@ -1092,11 +1305,31 @@ static void ksInstallMethods(Class cls) {
 
 %ctor {
     @autoreleasepool {
-        // 通知监听无条件注册（不依赖 dock 类是否已加载）
+        ksDiagBase();
+        // ① 设置面板改值的 darwin 广播：无条件监听（不依赖 dock 类是否已加载）
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         ksPrefsChangedCB, CFSTR(KS_DARWIN_NOTI), NULL,
                                         CFNotificationSuspensionBehaviorDeliverImmediately);
-        Class cls = NSClassFromString(@"UIKeyboardDockView");
-        if (cls) ksInstallMethods(cls);   // 已加载就现在装，没加载等 layoutSubviews 里补装
+        // ② 键盘弹出/收起：补一次类扫描 + 刷新（iOS17 上 dock 类可能此刻才加载）
+        NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+        for (NSString *n in @[@"UIKeyboardDidShowNotification", @"UIKeyboardWillShowNotification",
+                              @"UIKeyboardDidHideNotification"]) {
+            [nc addObserverForName:n object:nil queue:[NSOperationQueue mainQueue]
+                       usingBlock:^(NSNotification *note) { ksKeyboardEvent(note.name); }];
+        }
+        // ③ 扫一遍 dock 类并 swizzle；扫不到就定时重试（延迟加载 / iOS17 改名都能覆盖）
+        ksScanDockClasses();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ ksScanDockClasses(); ksRefreshDocks(); });
+        if ([NSTimer respondsToSelector:@selector(scheduledTimerWithTimeInterval:repeats:block:)]) {
+            [NSTimer scheduledTimerWithTimeInterval:3.0 repeats:YES block:^(NSTimer *t) {
+                @try {
+                    if ([ksDockTable() count] > 0) return;   // 已有 dock 实例就不用再扫
+                    ksScanDockClasses();
+                    ksAttachFallbackIfNeeded();
+                } @catch (NSException *e) {}
+            }];
+        }
+        ksDiagSet(@"挂载位置", @"dock（正常）");
     }
 }

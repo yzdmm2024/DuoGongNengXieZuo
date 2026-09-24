@@ -548,8 +548,24 @@
 			<key>height</key>
 			<real>160.0</real>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>显示最近一次「有键盘弹出过的 App」里插件的运行状态。用法：去微信/备忘录弹一次键盘打几个字，再回本页查看。看不到数据 = 插件没注入那个 App（检查越狱工具的 App 注入白名单）；偏好文件显示「未找到」= 设置读写不通。</string>
+			<key>label</key>
+			<string>诊断信息（排查用）</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSCustomCell</string>
+			<key>cellClass</key>
+			<string>KSDiagCell</string>
+			<key>height</key>
+			<real>210.0</real>
+		</dict>
 	</array>
 	<key>title</key>
-	<string>键盘下方状态 1.2.6</string>
+	<string>键盘下方状态 1.4.0</string>
 </dict>
 </plist>
