@@ -875,7 +875,7 @@ static void ksInstallMethods(Class cls);
 static NSHashTable *ksDockTable(void);
 static void ksBuildToolbarIn(UIView *container, BOOL atTop);
 static BOOL ksHasDockIn(UIView *v);
-static BOOL ksIsRemoteKeyboardHost(UIView *v);
+static BOOL ksHostHasKeyboard(UIView *v);
 static UIView *ksHostMount(void);
 static void ksHostMountSet(UIView *v);
 
@@ -898,12 +898,15 @@ static BOOL ksHasDockIn(UIView *v) {
     return NO;
 }
 
-// 是否是第三方键盘（微信输入法等）的宿主容器：子视图里有远程键盘占位视图
-static BOOL ksIsRemoteKeyboardHost(UIView *v) {
+// 容器内是否真的装着键盘：dock / 第三方键盘远程占位 / 系统键盘(UIKeyboard·UIKB 系列) 任一命中即算
+static BOOL ksHostHasKeyboard(UIView *v) {
     @try {
         for (UIView *s in v.subviews) {
             NSString *cn = NSStringFromClass([s class]);
+            if ([cn rangeOfString:@"KeyboardDockView"].length) return YES;
             if ([cn rangeOfString:@"Remote"].length && [cn rangeOfString:@"Keyboard"].length) return YES;
+            if ([cn rangeOfString:@"UIKeyboard"].length || [cn rangeOfString:@"UIKB"].length) return YES;
+            if (ksHostHasKeyboard(s)) return YES;   // 递归一层兜底
         }
     } @catch (NSException *e) {}
     return NO;
@@ -1057,10 +1060,15 @@ static void ksBuildToolbarIn(UIView *container, BOOL atTop) {
 - (void)layoutSubviews {
     %orig;
     @try {
-        // 只在"自己之前挂过"时才清理，避免每次 layout 都递归遍历整棵子树
-        if (ksHasDockIn(self) || !ksIsRemoteKeyboardHost(self)) {
+        // 有 dock 就交给 dock hook 处理，这里不重复挂
+        if (ksHasDockIn(self)) {
             if (ksHostMount() == self) { ksRemoveToolbarsIn(self); ksHostMountSet(nil); }
-            return;   // 系统键盘交给 dock hook；非第三方键盘容器不挂
+            return;
+        }
+        // 容器里确实装着键盘（第三方键盘 / iOS17 无 dock 的系统键盘）才挂；其它输入集不挂
+        if (!ksHostHasKeyboard(self)) {
+            if (ksHostMount() == self) { ksRemoveToolbarsIn(self); ksHostMountSet(nil); }
+            return;
         }
         ksInstallMethods([self class]);
         [ksDockTable() addObject:self];
@@ -1068,7 +1076,7 @@ static void ksBuildToolbarIn(UIView *container, BOOL atTop) {
             ksRemoveToolbarsIn(self);
             return;
         }
-        ksBuildToolbarIn(self, YES);    // 第三方键盘占满底部，只能挂在键盘上方
+        ksBuildToolbarIn(self, YES);    // 容器占满底部，工具栏挂在键盘上方
         ksHostMountSet(self);
     } @catch (NSException *e) {}
 }

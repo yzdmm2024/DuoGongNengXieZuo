@@ -23,8 +23,21 @@
 - 推送到 GitHub → Actions 自动出 `packages/*.deb`
 - 走既有越狱源发布流程（同 超级截图 / 隐私总开关）
 
-## 指定注入的 App
-默认注入所有 App（filter plist 不做过滤），系统关键进程（SpringBoard / 设置 / WebKit / 崩溃上报等）在 `%ctor` 里硬排除。要限定范围，编辑 `KeyboardStatus.plist` 的 `Filter → Bundles` 数组即可。
+## 指定注入的 App / 键盘
+`KeyboardStatus.plist` 用 `Filter → Classes` 列出注入触发类：
+`UIKeyboardDockView`（系统键盘底栏，含 iOS16）与 `UIInputSetHostView`（键盘容器，第三方键盘宿主 / iOS17 无 dock 的系统键盘都走这）。
+任一类被加载时 dylib 才注入，覆盖系统键盘与第三方键盘（微信输入法等）；系统关键进程仍在 `%ctor` 里硬排除。
+要限定范围，编辑 `Filter → Bundles` 数组即可。
+
+## v1.5.2（紧急修复：1.5.0/1.5.1 整个插件不加载）
+
+- **根因**：v1.5.0 把 `KeyboardStatus.plist` 的 `Filter` 清空成 `{}`，本意是"注入所有进程 + %ctor 黑名单"。
+  但 ElleKit/theos 的规则是 **Filter 为空 = 没有注入条件 = dylib 永不加载进任何 App**。
+  于是 1.5.0/1.5.1 整个插件是死的：工具栏不出现、"启用插件"开关怎么拨都没反应、改设置不生效——全部因为代码根本没跑。
+  这正对应"1.2.9 有、越更新越没有"。
+- 恢复成标准 `Filter → Classes` 注入（见上），与 1.2.9 同一套可靠机制。
+- 顺带放宽第三方键盘判定：原来只在"容器里是远程键盘占位视图"时才挂，iOS17 无 dock 的**系统**键盘会被漏掉；
+  现在改为"容器里装的是键盘（dock / 远程 / `UIKeyboard`·`UIKB` 系列）就挂，有 dock 仍交给 dock 处理"，iOS16/17 系统键盘与第三方键盘通吃。
 
 ## v1.5.1（第三方键盘：微信输入法等）
 
