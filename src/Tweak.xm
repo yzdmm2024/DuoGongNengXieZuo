@@ -10,29 +10,81 @@ static NSInteger const KS_TOOLBAR_TAG = 9174;
 
 #pragma mark - 偏好（跨进程：设置面板与 tweak 共用 KS_SUITE）
 
-// Roothide 实测（2026-09-06 frida）：面板写入的偏好经 RootHide 重定向，落在
+// Roothide/Dopamine 实测（2026-09-06 frida）：面板写入的偏好经 RootHide 重定向，落在
 // .jbroot-<UUID>/var/mobile/Library/Preferences/ 的文件里；而普通 App 进程的
 // CFPreferencesCopyAppValue 走 cfprefsd 默认容器视图，读不到这份文件 → 设置永不生效。
 // 解法：读直接落 jbroot 的 plist 文件，与面板写入落点物理一致，绕开 cfprefsd。
-static NSString *ksPrefsFilePath(void) {
-    static NSString *cached;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        @try {
-            NSString *leaf = @"var/mobile/Library/Preferences/com.yzdmm.keyboardstatus.plist";
-            NSFileManager *fm = [NSFileManager defaultManager];
-            NSString *p = [@"/var/jb" stringByAppendingPathComponent:leaf];
-            if ([fm fileExistsAtPath:p]) { cached = p; return; }
-            NSString *base = @"/private/var/containers/Bundle/Application";
-            for (NSString *it in [fm contentsOfDirectoryAtPath:base error:nil]) {
-                if ([it hasPrefix:@".jbroot-"]) {
-                    NSString *cand = [[base stringByAppendingPathComponent:it] stringByAppendingPathComponent:leaf];
-                    if ([fm fileExistsAtPath:cand]) { cached = cand; return; }
-                }
+//
+// ⚠️ v1.3.0 关键修复（「重装后改设置没反应 / 关了启用开关工具栏还在」根因）：
+// 旧实现用 dispatch_once 缓存路径，重装后 App 首次启动时 plist 尚未创建 → 命中不到
+// → 缓存成 nil 且永久不再重试 → tweak 一辈子退回 CFPreferences（读不到面板写的值）
+// → 所有开关看起来都无效（enabled 读不到 = 默认 YES = 工具栏永远在）。
+// 现在：命中即缓存；未命中只缓存 1 秒，文件一旦出现下次读取立刻生效。
+static NSString *ksPrefsFileName(void) { return @"com.yzdmm.keyboardstatus.plist"; }
+
+// 越狱根（rootless 各家实现不同，全部收集一遍）
+static NSArray *ksJBRoots(void) {
+    NSMutableArray *roots = [NSMutableArray array];
+    @try {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if ([fm fileExistsAtPath:@"/var/jb"]) [roots addObject:@"/var/jb"];
+        for (NSString *base in @[@"/private/var/containers/Bundle/Application",
+                                 @"/var/containers/Bundle/Application"]) {
+            for (NSString *it in ([fm contentsOfDirectoryAtPath:base error:nil] ?: @[])) {
+                if ([it hasPrefix:@".jbroot-"]) [roots addObject:[base stringByAppendingPathComponent:it]];
             }
-        } @catch (NSException *e) {}
-    });
-    return cached;
+        }
+    } @catch (NSException *e) {}
+    return roots;
+}
+
+static NSArray *ksPrefsCandidatePaths(void) {
+    NSString *name = ksPrefsFileName();
+    NSString *leaf = [@"var/mobile/Library/Preferences" stringByAppendingPathComponent:name];
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *r in ksJBRoots()) {
+        [out addObject:[r stringByAppendingPathComponent:leaf]];
+        [out addObject:[[r stringByAppendingPathComponent:@"private/var/mobile/Library/Preferences"]
+                           stringByAppendingPathComponent:name]];
+    }
+    [out addObject:[@"/private/var/mobile/Library/Preferences" stringByAppendingPathComponent:name]];
+    [out addObject:[@"/var/mobile/Library/Preferences" stringByAppendingPathComponent:name]];
+    return out;
+}
+
+// 读路径：优先已存在的文件；不存在时 1 秒后重试（绝不永久缓存 nil）
+static NSString *ksPrefsReadPath(void) {
+    static NSString *cached = nil;
+    static NSTimeInterval cachedAt = 0;
+    @try {
+        NSTimeInterval now = [[NSDate date] timeIntervalSinceReferenceDate];
+        if (cached && now - cachedAt < 1.0) return cached;
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if (cached && [fm fileExistsAtPath:cached]) { cachedAt = now; return cached; }
+        for (NSString *p in ksPrefsCandidatePaths()) {
+            if ([fm fileExistsAtPath:p]) { cached = p; cachedAt = now; return p; }
+        }
+        cached = nil; cachedAt = now;
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+// 写路径：已有文件就地写；否则挑第一个存在的 Preferences 目录新建
+static NSString *ksPrefsWritePath(void) {
+    @try {
+        NSString *p = ksPrefsReadPath();
+        if (p) return p;
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *r in ksJBRoots()) {
+            NSString *dir = [r stringByAppendingPathComponent:@"var/mobile/Library/Preferences"];
+            BOOL isDir = NO;
+            if ([fm fileExistsAtPath:dir isDirectory:&isDir] && isDir)
+                return [dir stringByAppendingPathComponent:ksPrefsFileName()];
+        }
+        NSString *dir = @"/private/var/mobile/Library/Preferences";
+        if ([fm fileExistsAtPath:dir]) return [dir stringByAppendingPathComponent:ksPrefsFileName()];
+    } @catch (NSException *e) {}
+    return nil;
 }
 
 static void KSSyncPrefs(void) {
@@ -41,10 +93,11 @@ static void KSSyncPrefs(void) {
 
 static id KSCopyPref(NSString *key) {
     @try {
-        NSString *p = ksPrefsFilePath();
+        NSString *p = ksPrefsReadPath();
         if (p) {
             NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:p];
-            return d[key];
+            id v = d[key];
+            if (v != nil) return v;   // 文件里有就用文件的（与面板落点一致）
         }
         // 找不到 jbroot 文件时退回 CFPreferences（有 hook 的环境仍可用）
         return (__bridge_transfer id)CFPreferencesCopyAppValue(
@@ -74,7 +127,7 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 static void KSSetPref(NSString *key, id value) {
     @try {
-        NSString *p = ksPrefsFilePath();
+        NSString *p = ksPrefsWritePath();
         if (p) {
             // 直写 jbroot 文件（与面板/读侧一致）；失败再退回 CFPreferences
             NSMutableDictionary *d = [[NSDictionary dictionaryWithContentsOfFile:p] mutableCopy]
@@ -134,13 +187,15 @@ static void ksSavePhrases(NSArray *phrases) {
     KSSetPref(@"quickPhrases", phrases);
 }
 
+// 轻提示（实现在 AI 段落，这里前置声明供各动作调用）
+static void ksToast(NSString *msg);
+
 #pragma mark - UI 辅助
 
-// 14.5 SDK 无 UIWindowScene.keyWindow(iOS 15+)，用 windows+isKeyWindow(iOS13 即有) 兼容查找
-static UIWindow *ksKeyWindow(void) {
+static NSArray *ksAllWindows(void) {
+    NSMutableArray *wins = [NSMutableArray array];
     @try {
         UIApplication *app = [UIApplication sharedApplication];
-        NSMutableArray *wins = [NSMutableArray array];
         if (@available(iOS 13.0, *)) {
             for (UIScene *s in app.connectedScenes) {
                 if ([s isKindOfClass:[UIWindowScene class]]) {
@@ -149,6 +204,14 @@ static UIWindow *ksKeyWindow(void) {
             }
         }
         if (wins.count == 0) [wins addObjectsFromArray:app.windows];
+    } @catch (NSException *e) {}
+    return wins;
+}
+
+// 14.5 SDK 无 UIWindowScene.keyWindow(iOS 15+)，用 windows+isKeyWindow(iOS13 即有) 兼容查找
+static UIWindow *ksKeyWindow(void) {
+    @try {
+        NSMutableArray *wins = [ksAllWindows() mutableCopy];
         for (UIWindow *w in wins) {
             if (w.isKeyWindow) return w;
         }
@@ -156,11 +219,34 @@ static UIWindow *ksKeyWindow(void) {
     } @catch (NSException *e) { return nil; }
 }
 
+// 视图树里找真正的 firstResponder（跳过键盘窗口，避免抓到键盘自己的输入控件）
+static UIView *ksFindFirstResponderIn(UIView *root, int depth) {
+    if (!root || depth > 24) return nil;
+    if (root.isFirstResponder) return root;
+    for (UIView *v in root.subviews) {
+        UIView *r = ksFindFirstResponderIn(v, depth + 1);
+        if (r) return r;
+    }
+    return nil;
+}
+
+// 取当前输入框：① UIWindow 私有 firstResponder（快）② 视图树兜底遍历（稳）
 static UIResponder *ksFindFirstResponder(void) {
     @try {
         UIWindow *kw = ksKeyWindow();
-        return [kw valueForKey:@"firstResponder"];
-    } @catch (NSException *e) { return nil; }
+        id fr = [kw valueForKey:@"firstResponder"];
+        if ([fr isKindOfClass:[UIResponder class]] &&
+            [fr conformsToProtocol:@protocol(UITextInput)]) return (UIResponder *)fr;
+    } @catch (NSException *e) {}
+    @try {
+        for (UIWindow *w in ksAllWindows()) {
+            NSString *cn = NSStringFromClass([w class]);
+            if ([cn rangeOfString:@"TextEffects"].length || [cn rangeOfString:@"Keyboard"].length) continue;
+            UIView *v = ksFindFirstResponderIn(w, 0);
+            if (v && [v conformsToProtocol:@protocol(UITextInput)]) return v;
+        }
+    } @catch (NSException *e) {}
+    return nil;
 }
 
 static UIViewController *ksTopViewController(void) {
@@ -316,6 +402,64 @@ static void ksActCut(id s, SEL _c) {
 }
 static void ksActPaste(id s, SEL _c) {
     @try { [[UIApplication sharedApplication] sendAction:@selector(paste:) to:nil from:nil forEvent:nil]; } @catch (NSException *e) {}
+}
+
+#pragma mark - 一键清空（清空当前输入框全部内容；长按撤销）
+
+static NSString *ksLastClearedText = nil;   // 最近一次被清掉的内容（供长按恢复）
+
+// 取输入框全文范围
+static UITextRange *ksFullRange(id<UITextInput> ti) {
+    UITextPosition *b = ti.beginningOfDocument, *e = ti.endOfDocument;
+    if (!b || !e) return nil;
+    return [ti textRangeFromPosition:b toPosition:e];
+}
+
+static void ksActClear(id s, SEL _c) {
+    @try {
+        UIResponder *fr = ksFindFirstResponder();
+        if (!fr || ![fr conformsToProtocol:@protocol(UITextInput)]) {
+            ksToast(@"请先点进输入框再清空");
+            return;
+        }
+        id<UITextInput> ti = (id<UITextInput>)fr;
+        UITextRange *all = ksFullRange(ti);
+        if (!all) { ksToast(@"清空失败：取不到文本范围"); return; }
+        NSString *old = [ti textInRange:all] ?: @"";
+        if (old.length == 0) { ksToast(@"当前输入框已经是空的"); return; }
+
+        ksLastClearedText = old;                       // 记住，长按可撤销
+        [ti replaceRange:all withText:@""];            // 主路径：UITextInput 协议替换
+
+        // 校验 + 兜底：个别自绘控件不认 replaceRange，改走 全选→删除 标准编辑链
+        NSString *after = [ti textInRange:ksFullRange(ti)] ?: @"";
+        if (after.length) {
+            [[UIApplication sharedApplication] sendAction:@selector(selectAll:) to:nil from:nil forEvent:nil];
+            [[UIApplication sharedApplication] sendAction:@selector(delete:) to:nil from:nil forEvent:nil];
+        }
+        // 最后兜底：UITextView/UITextField 直接置空
+        after = [ti textInRange:ksFullRange(ti)] ?: @"";
+        if (after.length && [fr respondsToSelector:@selector(setText:)]) {
+            [(id)fr performSelector:@selector(setText:) withObject:@""];
+        }
+        ksToast(@"已清空（长按清空键可撤销）");
+    } @catch (NSException *e) { ksToast(@"清空失败"); }
+}
+
+// 长按清空键 = 把刚清掉的内容放回去
+static void ksClearLongPress(id s, SEL _c, UILongPressGestureRecognizer *g) {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    @try {
+        if (ksLastClearedText.length == 0) { ksToast(@"没有可撤销的清空记录"); return; }
+        UIResponder *fr = ksFindFirstResponder();
+        if (!fr || ![fr conformsToProtocol:@protocol(UITextInput)]) {
+            ksToast(@"请先点进输入框再撤销");
+            return;
+        }
+        [(id<UITextInput>)fr insertText:ksLastClearedText];
+        ksLastClearedText = nil;
+        ksToast(@"已恢复上次清空的内容");
+    } @catch (NSException *e) {}
 }
 static void ksActCursorLeft(id s, SEL _c) {
     @try {
@@ -705,6 +849,13 @@ static void ksAILongPress(id s, SEL _c, UILongPressGestureRecognizer *g) {
 @interface UIKeyboardDockView : UIView
 @end
 
+// 下方实现的刷新/登记/注入接口，前置声明供 hook 内调用
+static void ksRefreshLayouts(UIView *root);
+static void ksRemoveToolbarsIn(UIView *root);
+static void ksStartPrefsPolling(void);
+static void ksInstallMethods(Class cls);
+static NSHashTable *ksDockTable(void);
+
 // 工具栏构建尺寸 / 位置约束，用关联对象挂在 stack 上（每个 dock 实例独立）
 static char kKSBuiltSizeKey;
 static char kKSCXKey;
@@ -717,9 +868,14 @@ static char kKSBtmKey;
     @try {
         KSSyncPrefs();  // 拿到设置里最新值（滑块改完，收起再拉起键盘即生效）
 
+        // 类延迟加载时 %ctor 可能没装上动作方法 → 这里补装（只装一次）
+        ksInstallMethods([self class]);
+        // 登记本实例 + 起文件轮询兜底：保证面板改值后无需收起键盘也能实时刷新
+        [ksDockTable() addObject:self];
+        ksStartPrefsPolling();
+
         if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
-            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
-            if (old) [old removeFromSuperview];
+            ksRemoveToolbarsIn(self);   // 关开关：递归清干净，不留残影
             return;
         }
 
@@ -730,8 +886,8 @@ static char kKSBtmKey;
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4); // 图标间隔
         // 自定义顺序（面板「按钮排序」写入 toolbarOrder；非法/缺项按默认补齐）
         NSArray *defOrder = @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-                              @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
-                              @"showAI"];
+                              @"showPhrases", @"showCursor", @"showDismiss", @"showClear",
+                              @"showQuickAction", @"showAI"];
         NSMutableArray *finalOrder = [NSMutableArray array];
         id savedOrder = KSCopyPref(@"toolbarOrder");
         if ([savedOrder isKindOfClass:[NSArray class]]) {
@@ -741,11 +897,12 @@ static char kKSBtmKey;
         for (NSString *k in defOrder)
             if (![finalOrder containsObject:k]) [finalOrder addObject:k];
         // 重建签名：图标大小 + 图标间隔 + 顺序 + 全部功能开关，任一变化都重建整个工具栏
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
             iconSize, spacing, [finalOrder componentsJoinedByString:@","],
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
-            KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO), KSBool(@"showAI", NO)];
+            KSBool(@"showDismiss", YES), KSBool(@"showClear", YES), KSBool(@"showQuickAction", NO),
+            KSBool(@"showAI", NO)];
         UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
         if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
@@ -783,6 +940,17 @@ static char kKSBtmKey;
                 } else if ([k isEqualToString:@"showDismiss"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
                     b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showClear"] && KSBool(k, YES)) {
+                    // 一键清空：单击清空当前输入框全部内容，长按撤销恢复
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeButton(@"trash", @"清", @selector(ksActClear), self, iconSize);
+                    if (b) {
+                        UILongPressGestureRecognizer *lp =
+                            [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(ksClearLongPress:)];
+                        lp.minimumPressDuration = 0.4;
+                        [b addGestureRecognizer:lp];
+                        [stack addArrangedSubview:b];
+                    }
                 } else if ([k isEqualToString:@"showQuickAction"] && KSBool(k, NO)) {
                     [stack addArrangedSubview:ksSeparator()];
                     b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b];
@@ -820,6 +988,39 @@ static char kKSBtmKey;
 
 #pragma mark - darwin 通知：面板改值 → 实时刷新键盘（无需收起再拉起）
 
+// 所有存活的 dock 实例（弱引用，dock 释放自动出表）；通知/轮询直接对着它们刷新，
+// 不再靠遍历窗口碰运气（旧版遍历方式在键盘窗口未挂载时经常一次也刷不到）
+static NSHashTable *ksDockTable(void) {
+    static NSHashTable *t = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ t = [NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory]; });
+    return t;
+}
+
+// 递归摘掉工具栏（关总开关时用：不管有几个 dock、嵌多深，全清干净）
+static void ksRemoveToolbarsIn(UIView *root) {
+    if (!root) return;
+    @try {
+        for (UIView *v in [root.subviews copy]) {
+            if (v.tag == KS_TOOLBAR_TAG) { [v removeFromSuperview]; continue; }
+            ksRemoveToolbarsIn(v);
+        }
+    } @catch (NSException *e) {}
+}
+
+static void ksRefreshDocks(void) {
+    @try {
+        for (UIView *d in [ksDockTable() allObjects]) {
+            if (![d isKindOfClass:[UIView class]]) continue;
+            if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) ksRemoveToolbarsIn(d);
+            [d setNeedsLayout];
+            [d layoutIfNeeded];
+        }
+        // 兜底：登记表还没填（键盘没弹过）时，遍历窗口找 dock 刷一遍
+        for (UIWindow *w in ksAllWindows()) ksRefreshLayouts(w);
+    } @catch (NSException *e) {}
+}
+
 static void ksRefreshLayouts(UIView *root) {
     if ([root isKindOfClass:NSClassFromString(@"UIKeyboardDockView")]) { [root setNeedsLayout]; return; }
     for (UIView *sub in [root subviews]) ksRefreshLayouts(sub);
@@ -828,50 +1029,74 @@ static void ksRefreshLayouts(UIView *root) {
 static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
                              CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        @try { KSSyncPrefs(); ksRefreshDocks(); } @catch (NSException *e) {}
+    });
+}
+
+#pragma mark - 兜底轮询：偏好文件一变就刷新（darwin 通知没送达时也保证实时）
+
+static NSDate *ksLastPrefsMod = nil;
+
+static void ksStartPrefsPolling(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
         @try {
-            KSSyncPrefs();
-            UIApplication *app = [UIApplication sharedApplication];
-            NSMutableArray *wins = [NSMutableArray array];
-            if (@available(iOS 13.0, *)) {
-                for (UIScene *s in app.connectedScenes) {
-                    if ([s isKindOfClass:[UIWindowScene class]]) {
-                        [wins addObjectsFromArray:((UIWindowScene *)s).windows];
-                    }
-                }
-            }
-            if (wins.count == 0) [wins addObjectsFromArray:app.windows];
-            for (UIWindow *w in wins) ksRefreshLayouts(w);
+            if (![NSTimer respondsToSelector:@selector(scheduledTimerWithTimeInterval:repeats:block:)]) return;
+            [NSTimer scheduledTimerWithTimeInterval:0.6 repeats:YES block:^(NSTimer *t) {
+                @try {
+                    NSString *p = ksPrefsReadPath();
+                    if (!p) return;
+                    NSDate *mod = [[[NSFileManager defaultManager] attributesOfItemAtPath:p error:nil]
+                                       fileModificationDate];
+                    if (!mod) return;
+                    static BOOL firstSeen = NO;
+                    if (ksLastPrefsMod && [mod timeIntervalSinceDate:ksLastPrefsMod] == 0) return;
+                    ksLastPrefsMod = mod;
+                    if (!firstSeen) { firstSeen = YES; return; }  // 首次只记时间，不刷新
+                    ksRefreshDocks();                              // 文件真变了才刷
+                } @catch (NSException *e) {}
+            }];
         } @catch (NSException *e) {}
     });
 }
 
 #pragma mark - 注入按钮动作方法到 dock 类
 
+// 懒注入：类可能在 %ctor 时还没被加载（TextInput 私有框架延迟加载），
+// 旧版 if(!cls) return 会让通知监听和方法一起全部失效 → 改设置不生效
+static void ksInstallMethods(Class cls) {
+    static BOOL installed = NO;
+    if (!cls || installed) return;
+    installed = YES;
+    struct { const char *name; IMP imp; const char *types; } methods[] = {
+        {"ksActSelectAll",  (IMP)ksActSelectAll, "v@:"},
+        {"ksActCut",        (IMP)ksActCut, "v@:"},
+        {"ksActPaste",      (IMP)ksActPaste, "v@:"},
+        {"ksActCursorLeft", (IMP)ksActCursorLeft, "v@:"},
+        {"ksActCursorRight",(IMP)ksActCursorRight, "v@:"},
+        {"ksActClipboard",  (IMP)ksActClipboard, "v@:"},
+        {"ksActPhrases",    (IMP)ksActPhrases, "v@:"},
+        {"ksActDismiss",    (IMP)ksActDismiss, "v@:"},
+        {"ksActClear",      (IMP)ksActClear, "v@:"},
+        {"ksClearLongPress:",(IMP)ksClearLongPress, "v@:@"},   // 长按清空键 = 撤销
+        {"ksActQuickLaunch",(IMP)ksActQuickLaunch, "v@:"},
+        {"ksActAI:",        (IMP)ksActAI, "v@:@"},          // 带 sender（loading/取消）
+        {"ksAILongPress:",  (IMP)ksAILongPress, "v@:@"},    // 长按手势
+    };
+    for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
+        SEL sel = sel_registerName(methods[i].name);
+        if (!class_addMethod(cls, sel, methods[i].imp, methods[i].types))
+            class_replaceMethod(cls, sel, methods[i].imp, methods[i].types);
+    }
+}
+
 %ctor {
     @autoreleasepool {
-        Class cls = NSClassFromString(@"UIKeyboardDockView");
-        if (!cls) return;
-        // 监听设置面板的实时广播（面板每次改开关/滑块都 post 一次）
+        // 通知监听无条件注册（不依赖 dock 类是否已加载）
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         ksPrefsChangedCB, CFSTR(KS_DARWIN_NOTI), NULL,
                                         CFNotificationSuspensionBehaviorDeliverImmediately);
-        struct { const char *name; IMP imp; const char *types; } methods[] = {
-            {"ksActSelectAll",  (IMP)ksActSelectAll, "v@:"},
-            {"ksActCut",        (IMP)ksActCut, "v@:"},
-            {"ksActPaste",      (IMP)ksActPaste, "v@:"},
-            {"ksActCursorLeft", (IMP)ksActCursorLeft, "v@:"},
-            {"ksActCursorRight",(IMP)ksActCursorRight, "v@:"},
-            {"ksActClipboard",  (IMP)ksActClipboard, "v@:"},
-            {"ksActPhrases",    (IMP)ksActPhrases, "v@:"},
-            {"ksActDismiss",    (IMP)ksActDismiss, "v@:"},
-            {"ksActQuickLaunch",(IMP)ksActQuickLaunch, "v@:"},
-            {"ksActAI:",        (IMP)ksActAI, "v@:@"},          // 带 sender（loading/取消）
-            {"ksAILongPress:",  (IMP)ksAILongPress, "v@:@"},    // 长按手势
-        };
-        for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
-            SEL sel = sel_registerName(methods[i].name);
-            if (!class_addMethod(cls, sel, methods[i].imp, methods[i].types))
-                class_replaceMethod(cls, sel, methods[i].imp, methods[i].types);
-        }
+        Class cls = NSClassFromString(@"UIKeyboardDockView");
+        if (cls) ksInstallMethods(cls);   // 已加载就现在装，没加载等 layoutSubviews 里补装
     }
 }
