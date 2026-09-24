@@ -11,8 +11,6 @@
 			<string>总开关</string>
 		</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.yzdmm.keyboardstatus.prefschanged</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -33,8 +31,6 @@
 			<string>工具栏开关</string>
 		</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.yzdmm.keyboardstatus.prefschanged</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -155,20 +151,6 @@
 			<string>showAI</string>
 			<key>label</key>
 			<string>AI 按钮（长按弹菜单）</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.yzdmm.keyboardstatus.prefschanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.yzdmm.keyboardstatus</string>
-			<key>key</key>
-			<string>showClear</string>
-			<key>label</key>
-			<string>一键清空（清空当前输入框）</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -550,6 +532,6 @@
 		</dict>
 	</array>
 	<key>title</key>
-	<string>键盘下方状态 1.5.2</string>
+	<string>键盘下方状态 1.2.6</string>
 </dict>
 </plist>

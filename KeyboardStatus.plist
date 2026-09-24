@@ -7,7 +7,6 @@
 		<key>Classes</key>
 		<array>
 			<string>UIKeyboardDockView</string>
-			<string>UIInputSetHostView</string>
 		</array>
 	</dict>
 </dict>

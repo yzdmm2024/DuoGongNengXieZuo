@@ -13,77 +13,30 @@
 
 #pragma mark - 偏好读写：直落 jbroot 文件（与 tweak 完全同款，绕开 cfprefsd）
 
-static NSString *ksPrefsFileName(void) { return @"com.yzdmm.keyboardstatus.plist"; }
-
-// 越狱根（rootless 各家实现不同，收集全部候选）
-static NSArray *ksJBRoots(void) {
-    NSMutableArray *roots = [NSMutableArray array];
-    @try {
-        NSFileManager *fm = [NSFileManager defaultManager];
-        if ([fm fileExistsAtPath:@"/var/jb"]) [roots addObject:@"/var/jb"];
-        for (NSString *base in @[@"/private/var/containers/Bundle/Application",
-                                 @"/var/containers/Bundle/Application"]) {
-            for (NSString *it in ([fm contentsOfDirectoryAtPath:base error:nil] ?: @[])) {
-                if ([it hasPrefix:@".jbroot-"]) [roots addObject:[base stringByAppendingPathComponent:it]];
+static NSString *ksPrefsFilePath(void) {
+    static NSString *cached;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        @try {
+            NSString *leaf = @"var/mobile/Library/Preferences/com.yzdmm.keyboardstatus.plist";
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSString *p = [@"/var/jb" stringByAppendingPathComponent:leaf];
+            if ([fm fileExistsAtPath:p]) { cached = p; return; }
+            NSString *base = @"/private/var/containers/Bundle/Application";
+            for (NSString *it in [fm contentsOfDirectoryAtPath:base error:nil]) {
+                if ([it hasPrefix:@".jbroot-"]) {
+                    NSString *cand = [[base stringByAppendingPathComponent:it] stringByAppendingPathComponent:leaf];
+                    if ([fm fileExistsAtPath:cand]) { cached = cand; return; }
+                }
             }
-        }
-    } @catch (NSException *e) {}
-    return roots;
-}
-
-static NSArray *ksPrefsCandidatePaths(void) {
-    NSString *name = ksPrefsFileName();
-    NSString *leaf = [@"var/mobile/Library/Preferences" stringByAppendingPathComponent:name];
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *r in ksJBRoots()) {
-        [out addObject:[r stringByAppendingPathComponent:leaf]];
-        [out addObject:[[r stringByAppendingPathComponent:@"private/var/mobile/Library/Preferences"]
-                           stringByAppendingPathComponent:name]];
-    }
-    [out addObject:[@"/private/var/mobile/Library/Preferences" stringByAppendingPathComponent:name]];
-    [out addObject:[@"/var/mobile/Library/Preferences" stringByAppendingPathComponent:name]];
-    return out;
-}
-
-// 读路径：命中即缓存；没命中只缓存 1 秒（绝不永久缓存 nil —— 旧版这个 bug 导致
-// 重装后 tweak 一辈子读不到面板写的值，改设置没反应）
-static NSString *ksPrefsReadPath(void) {
-    static NSString *cached = nil;
-    static NSTimeInterval cachedAt = 0;
-    @try {
-        NSTimeInterval now = [[NSDate date] timeIntervalSinceReferenceDate];
-        if (cached && now - cachedAt < 1.0) return cached;
-        NSFileManager *fm = [NSFileManager defaultManager];
-        if (cached && [fm fileExistsAtPath:cached]) { cachedAt = now; return cached; }
-        for (NSString *p in ksPrefsCandidatePaths()) {
-            if ([fm fileExistsAtPath:p]) { cached = p; cachedAt = now; return p; }
-        }
-        cached = nil; cachedAt = now;
-    } @catch (NSException *e) {}
-    return nil;
-}
-
-// 写路径：已有文件就地写；否则挑第一个存在的 Preferences 目录新建
-static NSString *ksPrefsWritePath(void) {
-    @try {
-        NSString *p = ksPrefsReadPath();
-        if (p) return p;
-        NSFileManager *fm = [NSFileManager defaultManager];
-        for (NSString *r in ksJBRoots()) {
-            NSString *dir = [r stringByAppendingPathComponent:@"var/mobile/Library/Preferences"];
-            BOOL isDir = NO;
-            if ([fm fileExistsAtPath:dir isDirectory:&isDir] && isDir)
-                return [dir stringByAppendingPathComponent:ksPrefsFileName()];
-        }
-        NSString *dir = @"/private/var/mobile/Library/Preferences";
-        if ([fm fileExistsAtPath:dir]) return [dir stringByAppendingPathComponent:ksPrefsFileName()];
-    } @catch (NSException *e) {}
-    return nil;
+        } @catch (NSException *e) {}
+    });
+    return cached;
 }
 
 static NSDictionary *KSPrefDict(void) {
     @try {
-        NSString *p = ksPrefsReadPath();
+        NSString *p = ksPrefsFilePath();
         if (p) return [NSDictionary dictionaryWithContentsOfFile:p] ?: @{};
     } @catch (NSException *e) {}
     return @{};
@@ -98,7 +51,7 @@ static void KSPostChanged(void) {
 
 static void KSWriteKey(NSString *key, id value) {
     @try {
-        NSString *p = ksPrefsWritePath();
+        NSString *p = ksPrefsFilePath();
         if (p) {
             NSMutableDictionary *d = [KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
             if (value) d[key] = value; else [d removeObjectForKey:key];
@@ -138,8 +91,8 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 static NSArray *ksDefaultButtonOrder(void) {
     return @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-             @"showPhrases", @"showCursor", @"showDismiss", @"showClear",
-             @"showQuickAction", @"showAI"];
+             @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
+             @"showAI"];
 }
 
 // 用户自定义顺序（toolbarOrder）与默认顺序合并：非法/缺失项按默认补齐
@@ -165,7 +118,6 @@ static NSDictionary *ksBtnSpecs(void) {
         @"showPhrases":    @[@"text.quote", @"语"],
         @"showCursor":     @[@"arrow.right", @"→"],
         @"showDismiss":    @[@"keyboard.chevron.compact.down", @"收"],
-        @"showClear":      @[@"trash", @"清"],
         @"showQuickAction":@[@"rectangle.stack", @"切"],
         @"showAI":         @[@"sparkles", @"AI"],
     };
@@ -256,8 +208,7 @@ static NSDictionary *ksBtnSpecs(void) {
             if (!KSBool(k, def)) continue;
             if ([k isEqualToString:@"showAI"] && !KSBool(@"aiEnabled", NO)) continue; // AI 总开关关闭不显示
             if ([k isEqualToString:@"showClipboard"] || [k isEqualToString:@"showDismiss"]
-                || [k isEqualToString:@"showClear"] || [k isEqualToString:@"showQuickAction"]
-                || [k isEqualToString:@"showAI"]) {
+                || [k isEqualToString:@"showQuickAction"] || [k isEqualToString:@"showAI"]) {
                 KSPREV_SEP();
             }
             NSArray *sf_fb = specs[k];
@@ -301,7 +252,7 @@ static NSDictionary *ksBtnSpecs(void) {
         // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4);
         NSString *orderSig = [ksFinalButtonOrder() componentsJoinedByString:@","];
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d%d%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d%d",
             iconSize, spacing, orderSig,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
             KSBool(@"showSelectAll", YES) ? 1 : 0,
@@ -311,7 +262,6 @@ static NSDictionary *ksBtnSpecs(void) {
             KSBool(@"showPhrases", YES) ? 1 : 0,
             KSBool(@"showCursor", YES) ? 1 : 0,
             KSBool(@"showDismiss", YES) ? 1 : 0,
-            KSBool(@"showClear", YES) ? 1 : 0,
             KSBool(@"showQuickAction", NO) ? 1 : 0,
             (KSBool(@"showAI", NO) && KSBool(@"aiEnabled", NO)) ? 1 : 0];
         if (![sig isEqualToString:_builtSig]) {
@@ -432,7 +382,7 @@ static NSDictionary *ksBtnSpecs(void) {
         if ([specifier respondsToSelector:@selector(propertyForKey:)]) {
             NSString *key = [specifier propertyForKey:@"key"];
             if ([key isKindOfClass:[NSString class]] && key.length) {
-                NSString *p = ksPrefsWritePath();
+                NSString *p = ksPrefsFilePath();
                 if (p) {
                     NSMutableDictionary *d = [KSPrefDict() mutableCopy] ?: [NSMutableDictionary dictionary];
                     if (value) d[key] = value;
@@ -465,7 +415,6 @@ static NSDictionary *ksBtnSpecs(void) {
         _names = @{@"showSelectAll": @"全选", @"showCut": @"剪切", @"showPaste": @"粘贴",
                    @"showClipboard": @"剪贴板历史", @"showPhrases": @"快捷短语",
                    @"showCursor": @"光标左右移", @"showDismiss": @"收起键盘",
-                   @"showClear": @"一键清空（长按可撤销）",
                    @"showQuickAction": @"快捷启动", @"showAI": @"AI 按钮"};
         _keys = [ksFinalButtonOrder() mutableCopy];
     }
