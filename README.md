@@ -26,6 +26,14 @@
 ## 指定注入的 App
 默认注入所有 App（filter plist 不做过滤），系统关键进程（SpringBoard / 设置 / WebKit / 崩溃上报等）在 `%ctor` 里硬排除。要限定范围，编辑 `KeyboardStatus.plist` 的 `Filter → Bundles` 数组即可。
 
+## v1.5.1（第三方键盘：微信输入法等）
+
+- **修「微信输入法下没有工具栏」**：frida dump 键盘窗口确认，第三方键盘挂在 `UIInputSetHostView` 上的是远程占位视图 `_UIRemoteKeyboardPlaceholderView`，**压根没有 `UIKeyboardDockView`** —— 只 hook dock，第三方键盘下工具栏必然不出现，所以关/开「启用插件」看着也没反应。
+- 新增 `%hook UIInputSetHostView`：仅当容器内**没有 dock 且确实是远程键盘容器**时才挂载，系统键盘仍走原来的 dock 路径，两种键盘不会重复挂两份。
+- 位置：第三方键盘占满屏幕底部，没有 dock 那条空位，工具栏改为挂在**键盘上方**（复用「抬高」滑块调上下）。
+- 工具栏构建逻辑抽成 `ksBuildToolbarIn(container, atTop)`，两种容器共用一套。
+- `ksInstallMethods` 改为**按类注入**（原来是全局只装一次）：现在有两个可能的挂载容器，只装一次会让第二个容器的按钮点击 `unrecognized selector` 直接崩。
+
 ## v1.5.0（性能回退 + 真修卡顿）
 v1.4.0 为了排查 iOS17 问题堆了一堆运行期检测，实测是负优化，本次全部移除，只保留真有用的修复：
 - **修「越来越卡」根因**：`layoutSubviews` 里读偏好近 20 次，旧实现每次都 `dictionaryWithContentsOfFile` 重读一遍 plist；键盘动画期间 layoutSubviews 每帧都跑 → 每秒上千次磁盘读 + plist 解析。现在整份偏好字典缓存 0.5 秒复用，收到面板通知立即作废（实时调节不受影响）。
