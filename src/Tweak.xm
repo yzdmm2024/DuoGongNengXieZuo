@@ -878,30 +878,21 @@ static BOOL ksIsRemoteKeyboardView(UIView *v) {
     } @catch (NSException *e) { return NO; }
 }
 
-static BOOL ksViewContainsRemote(UIView *v) {
-    @try {
-        UIView *cur = v;
-        while (cur) {
-            for (UIView *s in cur.subviews)
-                if (ksIsRemoteKeyboardView(s)) return YES;
-            cur = cur.superview;
-        }
-    } @catch (NSException *e) {}
-    return NO;
-}
-
 static UIView *ksFindRemoteHost(UIView *root) {
     if (!root) return nil;
     @try {
         NSMutableArray *q = [NSMutableArray arrayWithObject:root];
+        UIView *anyHost = nil;
         while (q.count) {
             UIView *v = q.firstObject; [q removeObjectAtIndex:0];
             if ([NSStringFromClass([v class]) isEqualToString:@"UIInputSetHostView"]) {
+                if (!anyHost) anyHost = v;
                 for (UIView *s in v.subviews)
                     if (ksIsRemoteKeyboardView(s)) return v;
             }
             for (UIView *s in v.subviews) [q addObject:s];
         }
+        return anyHost; // 兜底：找到任意 UIInputSetHostView 也挂上去
     } @catch (NSException *e) {}
     return nil;
 }
@@ -923,16 +914,37 @@ static UIWindow *ksKeyboardWindow(void) {
     return nil;
 }
 
+static BOOL ksToolbarExistsInWindow(UIWindow *w) {
+    if (!w) return NO;
+    @try { return [w viewWithTag:KS_TOOLBAR_TAG] != nil; } @catch (NSException *e) { return NO; }
+}
+
 static void ksOnKeyboardShow(void) {
     @try {
         if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) return;
         UIWindow *kw = ksKeyboardWindow();
         if (!kw) return;
+        // 已经有工具栏就不用再挂（避免 dock 与通知式挂载重复）
+        if (ksToolbarExistsInWindow(kw)) return;
         UIView *host = ksFindRemoteHost(kw);
-        if (!host) return;
-        Class hc = NSClassFromString(@"UIInputSetHostView");
-        if (hc) ksInstallMethods(hc);   // 仅 addMethod，不替换任何系统方法
-        ksBuildToolbarIn(host, YES, host);
+        if (host) {
+            Class hc = NSClassFromString(@"UIInputSetHostView");
+            if (hc) ksInstallMethods(hc);   // 仅 addMethod，不替换任何系统方法
+            ksBuildToolbarIn(host, YES, host);
+        }
+        // 有些第三方键盘的远程视图会延迟加入层级，0.2s 后再尝试一次
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            @try {
+                UIWindow *kw2 = ksKeyboardWindow();
+                if (!kw2 || ksToolbarExistsInWindow(kw2)) return;
+                UIView *host2 = ksFindRemoteHost(kw2);
+                if (!host2) return;
+                Class hc2 = NSClassFromString(@"UIInputSetHostView");
+                if (hc2) ksInstallMethods(hc2);
+                ksBuildToolbarIn(host2, YES, host2);
+            } @catch (NSException *e) {}
+        });
     } @catch (NSException *e) {}
 }
 
@@ -991,8 +1003,8 @@ static void ksInstallMethods(Class cls) {
             if (old) [old removeFromSuperview];
             return;
         }
-        // 第三方键盘（无 dock）由通知式挂载处理，这里跳过避免重复
-        if (ksViewContainsRemote(self)) {
+        // 如果键盘窗口里已经有工具栏（通知式挂载已处理），避免重复绘制
+        if (ksToolbarExistsInWindow([self window])) {
             UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
             if (old) [old removeFromSuperview];
             return;
@@ -1048,15 +1060,18 @@ static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         ksPrefsChangedCB, CFSTR(KS_DARWIN_NOTI), NULL,
                                         CFNotificationSuspensionBehaviorDeliverImmediately);
-        // 第三方键盘（微信输入法等）无 dock → 键盘显示通知时挂载到宿主容器。
+        // 第三方键盘（微信输入法等）无 dock → 键盘显示/变化通知时挂载到宿主容器。
         // 注意：这里只注册通知 + addSubview，不 swizzle UIInputSetHostView 等通用容器类。
-        static id ksKbObs1, ksKbObs2;
+        static id ksKbObs1, ksKbObs2, ksKbObs3;
         ksKbObs1 = [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardDidShowNotification
                                                                      object:nil queue:[NSOperationQueue mainQueue]
                                                                  usingBlock:^(NSNotification *n){ ksOnKeyboardShow(); }];
         ksKbObs2 = [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillHideNotification
                                                                      object:nil queue:[NSOperationQueue mainQueue]
                                                                  usingBlock:^(NSNotification *n){ ksOnKeyboardHide(); }];
+        ksKbObs3 = [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardDidChangeFrameNotification
+                                                                     object:nil queue:[NSOperationQueue mainQueue]
+                                                                 usingBlock:^(NSNotification *n){ ksOnKeyboardShow(); }];
         // 注入按钮动作方法（仅 addMethod，安全）
         for (NSString *n in @[@"UIKeyboardDockView", @"UIInputSetHostView"]) {
             Class c = NSClassFromString(n);
