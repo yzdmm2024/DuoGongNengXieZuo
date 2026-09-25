@@ -1,43 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
-#include <stdlib.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-// 手动重启（system() 在 iOS 不可用）：用 posix_spawn 调 killall 杀 SpringBoard 触发注销
-// 优先绝对路径直接调 killall（不依赖 PATH），找不到再回退 sh -c
-static void ksRespring(void) {
-    @try {
-        static const char *k[] = {
-            "/usr/bin/killall", "/bin/killall",
-            "/var/jb/usr/bin/killall", "/var/jb/bin/killall",
-            "/sbin/killall", NULL
-        };
-        const char *bin = NULL;
-        for (int i = 0; k[i]; i++) {
-            if (access(k[i], X_OK) == 0) { bin = k[i]; break; }
-        }
-        if (bin) {
-            pid_t pid;
-            char *argv[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
-            posix_spawn(&pid, bin, NULL, NULL, argv, NULL);
-            waitpid(pid, NULL, 0);
-            return;
-        }
-        // 回退：sh -c（依赖 PATH 找 killall）
-        static const char *shc[] = {"/bin/sh", "/var/jb/bin/sh", "/usr/bin/sh", NULL};
-        for (int i = 0; shc[i]; i++) {
-            if (access(shc[i], X_OK) == 0) {
-                pid_t pid;
-                char *argv[] = {(char *)"sh", (char *)"-c", (char *)"killall -9 SpringBoard", NULL};
-                posix_spawn(&pid, shc[i], NULL, NULL, argv, NULL);
-                waitpid(pid, NULL, 0);
-                return;
-            }
-        }
-    } @catch (NSException *e) {}
-}
+#import "deleteall_icon.h"
 
 // 前向声明：新增函数在 %ctor / 早定义处被提前引用
 static void ksToast(NSString *msg);
@@ -761,10 +724,19 @@ static char kKSBuiltSizeKey;
 static char kKSCXKey;
 static char kKSBtmKey;
 
-#pragma mark - 全删按钮：用户提供的垃圾桶图标，缺失时退回 SF Symbol（绝不留空）
+#pragma mark - 全删按钮：内嵌图标 + 文件覆盖，缺失时退回 SF Symbol（绝不留空）
 
 static UIImage *ksDeleteAllRawIcon(void) {
     @try {
+        // 1) 内嵌 base64：沙盒第三方 App 读不到 /var/jb 文件时也能显示
+        static UIImage *embedded;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            NSData *data = [[NSData alloc] initWithBase64EncodedString:kKSEmbeddedDeleteAllBase64 options:0];
+            embedded = [UIImage imageWithData:data];
+        });
+        if (embedded) return embedded;
+        // 2) 用户自定义覆盖文件
         NSArray *bases = @[@"/var/jb/Library/KeyboardStatus", @"/Library/KeyboardStatus"];
         for (NSString *b in bases) {
             NSString *p = [b stringByAppendingPathComponent:@"deleteall.png"];
@@ -775,31 +747,26 @@ static UIImage *ksDeleteAllRawIcon(void) {
     return nil;
 }
 
-static UIImage *ksScaleImage(UIImage *img, CGFloat s) {
-    if (!img) return nil;
-    @try {
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(s, s), NO, 0);
-        [img drawInRect:CGRectMake(0, 0, s, s)];
-        UIImage *r = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        return r;
-    } @catch (NSException *e) { return nil; }
-}
-
 static UIButton *ksMakeDeleteAllButton(id target, CGFloat iconSize) {
     @try {
-        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-        UIImage *img = ksScaleImage(ksDeleteAllRawIcon(), iconSize);
-        if (img) [b setImage:img forState:UIControlStateNormal];
-        else {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+        UIImage *raw = ksDeleteAllRawIcon();
+        UIImage *img = raw ? [raw imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal] : nil;
+        if (!img) {
             UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:iconSize
                                                                                             weight:UIImageSymbolWeightRegular];
-            UIImage *sf = [UIImage systemImageNamed:@"trash" withConfiguration:cfg];
-            if (sf) [b setImage:sf forState:UIControlStateNormal];
-            else [b setTitle:@"清" forState:UIControlStateNormal];
+            img = [UIImage systemImageNamed:@"trash" withConfiguration:cfg];
         }
-        [b setTintColor:[UIColor labelColor]];
-        b.contentEdgeInsets = UIEdgeInsetsMake(3, 5, 3, 5);
+        if (img) {
+            [b setImage:img forState:UIControlStateNormal];
+            b.imageView.contentMode = UIViewContentModeScaleAspectFit;
+        } else {
+            [b setTitle:@"清" forState:UIControlStateNormal];
+            [b setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
+        }
+        b.contentEdgeInsets = UIEdgeInsetsMake(2, 2, 2, 2);
+        [b.widthAnchor constraintEqualToConstant:iconSize].active = YES;
+        [b.heightAnchor constraintEqualToConstant:iconSize].active = YES;
         [b addTarget:target action:@selector(ksActDeleteAll) forControlEvents:UIControlEventTouchUpInside];
         return b;
     } @catch (NSException *e) { return nil; }
@@ -977,39 +944,6 @@ static void ksOnKeyboardHide(void) {
     } @catch (NSException *e) {}
 }
 
-#pragma mark - 更新后手动重启提示（不再自动注销）
-
-static NSString *ksRestartFlagPath(void) {
-    NSArray *bases = @[@"/var/jb/Library/KeyboardStatus/.needs_respring",
-                       @"/Library/KeyboardStatus/.needs_respring"];
-    for (NSString *p in bases)
-        if ([[NSFileManager defaultManager] fileExistsAtPath:p]) return p;
-    return nil;
-}
-
-static void ksMaybePromptRestart(void) {
-    @try {
-        NSString *flag = ksRestartFlagPath();
-        if (!flag) return;
-        [[NSFileManager defaultManager] removeItemAtPath:flag error:nil]; // 只提示一次
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            @try {
-                UIViewController *vc = ksTopViewController();
-                if (!vc) return;
-                UIAlertController *a = [UIAlertController alertControllerWithTitle:@"插件已更新"
-                                                                          message:@"键盘下方状态已更新。是否现在重启（注销）使改动完全生效？"
-                                                                   preferredStyle:UIAlertControllerStyleAlert];
-                [a addAction:[UIAlertAction actionWithTitle:@"稍后重启" style:UIAlertActionStyleCancel handler:nil]];
-                [a addAction:[UIAlertAction actionWithTitle:@"马上重启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x){
-                    @try { ksRespring(); } @catch (NSException *e) {}
-                }]];
-                [vc presentViewController:a animated:YES completion:nil];
-            } @catch (NSException *e) {}
-        });
-    } @catch (NSException *e) {}
-}
-
 #pragma mark - 注入按钮动作方法（仅 addMethod，不替换系统方法，安全）
 
 static void ksInstallMethods(Class cls) {
@@ -1128,7 +1062,7 @@ static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
             Class c = NSClassFromString(n);
             if (c) ksInstallMethods(c);
         }
-        // 更新后不再自动注销：有标志才提示用户手动选择
-        ksMaybePromptRestart();
+        // 注意：手动重启提示只放在设置面板（KSSettingsController），
+        // 这里不再弹窗，避免每个 App 启动都弹一次。
     }
 }
