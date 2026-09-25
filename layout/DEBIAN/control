@@ -1,9 +1,9 @@
 Package: com.yzdmm.keyboardstatus
 Name: 键盘下方状态
-Version: 1.2.14
+Version: 1.2.6
 Architecture: iphoneos-arm64
 Depends: firmware (>= 16.0), mobilesubstrate, preferenceloader
 Maintainer: yzdmm
 Author: yzdmm
 Section: Tweaks
-Description: 系统键盘底栏加功能按钮（全选/剪切/粘贴/光标移动/剪贴板历史/快捷短语/收起键盘/全删）+ 第三方键盘（微信输入法）工具栏支持。rootless 适配，逐功能可关，安全不崩。
+Description: 系统键盘底栏加功能按钮（全选/剪切/粘贴/光标移动/剪贴板历史/快捷短语/收起键盘）+ 可选状态条。rootless 适配，逐功能可关，安全不崩。

@@ -1,71 +1,6 @@
 #import <Preferences/Preferences.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
-#include <stdlib.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-// 标记「马上重启」：设置面板可能没权限直接杀 SpringBoard，写标志让 tweak 在下次键盘出现时注销
-static void ksMarkRespringNow(void) {
-    @try {
-        NSString *dir = @"/var/jb/Library/KeyboardStatus";
-        NSString *flag = [dir stringByAppendingPathComponent:@".do_respring"];
-        [[NSFileManager defaultManager] createDirectoryAtPath:dir
-                                  withIntermediateDirectories:YES
-                                                   attributes:nil
-                                                        error:nil];
-        [@"" writeToFile:flag atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    } @catch (NSException *e) {}
-}
-
-// 手动重启（system() 在 iOS 不可用）：优先 sbreload，兜底 killall，再兜底 sh -c
-static void ksRespring(void) {
-    @try {
-        // 1) sbreload：越狱专用安全注销，多数 rootless 环境可用
-        static const char *sbreload_paths[] = {
-            "/var/jb/usr/bin/sbreload", "/usr/bin/sbreload",
-            "/var/jb/bin/sbreload", "/bin/sbreload", NULL
-        };
-        for (int i = 0; sbreload_paths[i]; i++) {
-            if (access(sbreload_paths[i], X_OK) == 0) {
-                pid_t pid;
-                char *argv[] = {(char *)"sbreload", NULL};
-                if (posix_spawn(&pid, sbreload_paths[i], NULL, NULL, argv, NULL) == 0) {
-                    waitpid(pid, NULL, 0);
-                    return;
-                }
-            }
-        }
-        // 2) 兜底 killall
-        static const char *k[] = {
-            "/var/jb/usr/bin/killall", "/var/jb/bin/killall",
-            "/usr/bin/killall", "/bin/killall", "/sbin/killall", NULL
-        };
-        for (int i = 0; k[i]; i++) {
-            if (access(k[i], X_OK) == 0) {
-                pid_t pid;
-                char *argv[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
-                if (posix_spawn(&pid, k[i], NULL, NULL, argv, NULL) == 0) {
-                    waitpid(pid, NULL, 0);
-                    return;
-                }
-            }
-        }
-        // 3) 再兜底 sh -c
-        static const char *shc[] = {"/var/jb/bin/sh", "/bin/sh", "/usr/bin/sh", NULL};
-        for (int i = 0; shc[i]; i++) {
-            if (access(shc[i], X_OK) == 0) {
-                pid_t pid;
-                char *argv[] = {(char *)"sh", (char *)"-c", (char *)"killall -9 SpringBoard", NULL};
-                if (posix_spawn(&pid, shc[i], NULL, NULL, argv, NULL) == 0) {
-                    waitpid(pid, NULL, 0);
-                    return;
-                }
-            }
-        }
-    } @catch (NSException *e) {}
-}
 
 #define KS_SUITE @"com.yzdmm.keyboardstatus"
 // 与 Tweak.xm 里监听的同名 darwin 通知：面板改值 → tweak 实时刷新
@@ -156,8 +91,8 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 static NSArray *ksDefaultButtonOrder(void) {
     return @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-             @"showPhrases", @"showCursor", @"showDismiss", @"showDeleteAll",
-             @"showQuickAction", @"showAI"];
+             @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
+             @"showAI"];
 }
 
 // 用户自定义顺序（toolbarOrder）与默认顺序合并：非法/缺失项按默认补齐
@@ -183,7 +118,6 @@ static NSDictionary *ksBtnSpecs(void) {
         @"showPhrases":    @[@"text.quote", @"语"],
         @"showCursor":     @[@"arrow.right", @"→"],
         @"showDismiss":    @[@"keyboard.chevron.compact.down", @"收"],
-        @"showDeleteAll":  @[@"trash", @"清"],
         @"showQuickAction":@[@"rectangle.stack", @"切"],
         @"showAI":         @[@"sparkles", @"AI"],
     };
@@ -274,8 +208,7 @@ static NSDictionary *ksBtnSpecs(void) {
             if (!KSBool(k, def)) continue;
             if ([k isEqualToString:@"showAI"] && !KSBool(@"aiEnabled", NO)) continue; // AI 总开关关闭不显示
             if ([k isEqualToString:@"showClipboard"] || [k isEqualToString:@"showDismiss"]
-                || [k isEqualToString:@"showDeleteAll"] || [k isEqualToString:@"showQuickAction"]
-                || [k isEqualToString:@"showAI"]) {
+                || [k isEqualToString:@"showQuickAction"] || [k isEqualToString:@"showAI"]) {
                 KSPREV_SEP();
             }
             NSArray *sf_fb = specs[k];
@@ -319,7 +252,7 @@ static NSDictionary *ksBtnSpecs(void) {
         // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4);
         NSString *orderSig = [ksFinalButtonOrder() componentsJoinedByString:@","];
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d%d%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d%d",
             iconSize, spacing, orderSig,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
             KSBool(@"showSelectAll", YES) ? 1 : 0,
@@ -329,7 +262,6 @@ static NSDictionary *ksBtnSpecs(void) {
             KSBool(@"showPhrases", YES) ? 1 : 0,
             KSBool(@"showCursor", YES) ? 1 : 0,
             KSBool(@"showDismiss", YES) ? 1 : 0,
-            KSBool(@"showDeleteAll", YES) ? 1 : 0,
             KSBool(@"showQuickAction", NO) ? 1 : 0,
             (KSBool(@"showAI", NO) && KSBool(@"aiEnabled", NO)) ? 1 : 0];
         if (![sig isEqualToString:_builtSig]) {
@@ -462,36 +394,6 @@ static NSDictionary *ksBtnSpecs(void) {
     } @catch (NSException *e) {}
 }
 
-// 更新后手动重启提示（不再自动注销）
-- (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];
-    @try {
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSArray *need = @[@"/var/jb/Library/KeyboardStatus/.needs_respring",
-                          @"/Library/KeyboardStatus/.needs_respring"];
-        NSArray *doNow = @[@"/var/jb/Library/KeyboardStatus/.do_respring",
-                            @"/Library/KeyboardStatus/.do_respring"];
-        NSString *flag = nil;
-        for (NSString *p in need)
-            if ([fm fileExistsAtPath:p]) { flag = p; break; }
-        // 清理旧的「马上重启」残留标志（上次点了但没成功注销）
-        for (NSString *p in doNow) [fm removeItemAtPath:p error:nil];
-        if (!flag) return;
-        [fm removeItemAtPath:flag error:nil]; // 先删，避免反复弹窗；删失败说明 postinst 权限还有问题
-        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"插件已更新"
-                                                                  message:@"键盘下方状态已更新。是否现在重启（注销）使改动完全生效？"
-                                                           preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:@"稍后重启" style:UIAlertActionStyleCancel handler:nil]];
-        [a addAction:[UIAlertAction actionWithTitle:@"马上重启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x){
-            @try {
-                ksMarkRespringNow();   // 万一设置面板直接杀 SpringBoard 没权限，让 tweak 兜底
-                ksRespring();          // 优先直接注销
-            } @catch (NSException *e) {}
-        }]];
-        [self presentViewController:a animated:YES completion:nil];
-    } @catch (NSException *e) {}
-}
-
 @end
 
 #pragma mark - 子菜单入口 cell（点击 push 子页面；实现放文件尾，因引用其后的子页面类）
@@ -513,8 +415,7 @@ static NSDictionary *ksBtnSpecs(void) {
         _names = @{@"showSelectAll": @"全选", @"showCut": @"剪切", @"showPaste": @"粘贴",
                    @"showClipboard": @"剪贴板历史", @"showPhrases": @"快捷短语",
                    @"showCursor": @"光标左右移", @"showDismiss": @"收起键盘",
-                   @"showDeleteAll": @"全删", @"showQuickAction": @"快捷启动",
-                   @"showAI": @"AI 按钮"};
+                   @"showQuickAction": @"快捷启动", @"showAI": @"AI 按钮"};
         _keys = [ksFinalButtonOrder() mutableCopy];
     }
     return self;

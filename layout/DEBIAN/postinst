@@ -1,10 +1,4 @@
 #!/bin/bash
-# 安装/更新后不再自动注销。写入标志文件，由设置面板提示用户手动选择「稍后/马上重启」。
-# 目录和文件都改为 mobile 可写，否则设置面板里的「稍后重启」删不掉标志，会反复弹窗。
-DIR=/var/jb/Library/KeyboardStatus
-FLAG=$DIR/.needs_respring
-mkdir -p "$DIR" 2>/dev/null
-touch "$FLAG" 2>/dev/null
-chmod 777 "$DIR" 2>/dev/null
-chmod 666 "$FLAG" 2>/dev/null
+# 安装后注销主界面让设置入口与 tweak 重新加载（rootless 下 kill SpringBoard 即 respring）
+killall -9 SpringBoard 2>/dev/null || true
 exit 0

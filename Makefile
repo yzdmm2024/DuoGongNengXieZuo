@@ -10,8 +10,7 @@ TARGET := iphone:clang:14.5:14.0
 # tweak 注入的是普通 App（arm64 进程），所以按钮一直正常
 ARCHS = arm64 arm64e
 THEOS_PACKAGE_SCHEME = rootless
-# 安装/更新后不再自动 kill SpringBoard（避免自动注销），改为提示用户手动重启。
-# INSTALL_TARGET_PROCESSES = SpringBoard
+INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
