@@ -799,7 +799,7 @@ static void ksBuildToolbarIn(UIView *container, BOOL atTop, id target) {
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
             KSBool(@"showDismiss", YES), KSBool(@"showDeleteAll", YES), KSBool(@"showQuickAction", NO),
-            KSBool(@"showAI", NO), atTop ? 1 : 0];
+            KSBool(@"showAI", NO), 0];
         UIStackView *stack = (UIStackView *)[container viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
         if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
@@ -853,9 +853,7 @@ static void ksBuildToolbarIn(UIView *container, BOOL atTop, id target) {
                 }
             }
             NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:container.centerXAnchor constant:offX];
-            NSLayoutConstraint *pos = atTop
-                ? [stack.topAnchor constraintEqualToAnchor:container.topAnchor constant:lift]
-                : [stack.bottomAnchor constraintEqualToAnchor:container.bottomAnchor constant:-lift];
+            NSLayoutConstraint *pos = [stack.bottomAnchor constraintEqualToAnchor:container.bottomAnchor constant:-lift];
             cx.active = YES; pos.active = YES;
             objc_setAssociatedObject(stack, &kKSBuiltSizeKey, sig, OBJC_ASSOCIATION_RETAIN);
             objc_setAssociatedObject(stack, &kKSCXKey,  cx,  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -864,35 +862,37 @@ static void ksBuildToolbarIn(UIView *container, BOOL atTop, id target) {
             NSLayoutConstraint *cx  = objc_getAssociatedObject(stack, &kKSCXKey);
             NSLayoutConstraint *pos = objc_getAssociatedObject(stack, &kKSBtmKey);
             cx.constant  = offX;
-            pos.constant = atTop ? lift : -lift;
+            pos.constant = -lift;
         }
     } @catch (NSException *e) {}
 }
 
-#pragma mark - 第三方键盘（微信输入法等）支持：通知式挂载，不 swizzle 通用容器类
+#pragma mark - 统一挂载：优先 dock（系统键盘），兜底宿主（第三方键盘），始终底部对齐
 
-static BOOL ksIsRemoteKeyboardView(UIView *v) {
-    @try {
-        NSString *cn = NSStringFromClass([v class]);
-        return ([cn rangeOfString:@"Remote"].length > 0 && [cn rangeOfString:@"Keyboard"].length > 0);
-    } @catch (NSException *e) { return NO; }
-}
-
-static UIView *ksFindRemoteHost(UIView *root) {
+// BFS：找 UIKeyboardDockView（系统键盘专用，位置统一在底部，1.2.9 的稳定方案）
+static UIView *ksFindDock(UIView *root) {
     if (!root) return nil;
     @try {
         NSMutableArray *q = [NSMutableArray arrayWithObject:root];
-        UIView *anyHost = nil;
         while (q.count) {
             UIView *v = q.firstObject; [q removeObjectAtIndex:0];
-            if ([NSStringFromClass([v class]) isEqualToString:@"UIInputSetHostView"]) {
-                if (!anyHost) anyHost = v;
-                for (UIView *s in v.subviews)
-                    if (ksIsRemoteKeyboardView(s)) return v;
-            }
+            if ([NSStringFromClass([v class]) isEqualToString:@"UIKeyboardDockView"]) return v;
             for (UIView *s in v.subviews) [q addObject:s];
         }
-        return anyHost; // 兜底：找到任意 UIInputSetHostView 也挂上去
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+// BFS：找 UIInputSetHostView（第三方/远程键盘宿主，仅在无 dock 时兜底用）
+static UIView *ksFindHost(UIView *root) {
+    if (!root) return nil;
+    @try {
+        NSMutableArray *q = [NSMutableArray arrayWithObject:root];
+        while (q.count) {
+            UIView *v = q.firstObject; [q removeObjectAtIndex:0];
+            if ([NSStringFromClass([v class]) isEqualToString:@"UIInputSetHostView"]) return v;
+            for (UIView *s in v.subviews) [q addObject:s];
+        }
     } @catch (NSException *e) {}
     return nil;
 }
@@ -914,46 +914,47 @@ static UIWindow *ksKeyboardWindow(void) {
     return nil;
 }
 
-static BOOL ksToolbarExistsInWindow(UIWindow *w) {
-    if (!w) return NO;
-    @try { return [w viewWithTag:KS_TOOLBAR_TAG] != nil; } @catch (NSException *e) { return NO; }
+static void ksRemoveToolbarInWindow(UIWindow *w) {
+    if (!w) return;
+    @try {
+        UIView *old = [w viewWithTag:KS_TOOLBAR_TAG];
+        if (old) [old removeFromSuperview];
+    } @catch (NSException *e) {}
 }
 
-static void ksOnKeyboardShow(void) {
+// 统一入口：保证键盘窗口里只有一条工具栏，且始终锚定在底部（位置统一）
+static void ksEnsureToolbar(void) {
     @try {
-        if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) return;
+        if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
+            ksRemoveToolbarInWindow(ksKeyboardWindow());
+            return;
+        }
         UIWindow *kw = ksKeyboardWindow();
         if (!kw) return;
-        // 已经有工具栏就不用再挂（避免 dock 与通知式挂载重复）
-        if (ksToolbarExistsInWindow(kw)) return;
-        UIView *host = ksFindRemoteHost(kw);
-        if (host) {
-            Class hc = NSClassFromString(@"UIInputSetHostView");
-            if (hc) ksInstallMethods(hc);   // 仅 addMethod，不替换任何系统方法
-            ksBuildToolbarIn(host, YES, host);
-        }
-        // 有些第三方键盘的远程视图会延迟加入层级，0.2s 后再尝试一次
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            @try {
-                UIWindow *kw2 = ksKeyboardWindow();
-                if (!kw2 || ksToolbarExistsInWindow(kw2)) return;
-                UIView *host2 = ksFindRemoteHost(kw2);
-                if (!host2) return;
-                Class hc2 = NSClassFromString(@"UIInputSetHostView");
-                if (hc2) ksInstallMethods(hc2);
-                ksBuildToolbarIn(host2, YES, host2);
-            } @catch (NSException *e) {}
-        });
+        // 选容器：优先 dock（系统键盘），否则宿主（第三方键盘，如微信输入法）
+        UIView *container = ksFindDock(kw);
+        if (!container) container = ksFindHost(kw);
+        if (!container) return;   // 宿主延迟加入层级，交给重试逻辑
+        // 若已有工具栏但挂在错误容器，先移除再重建，避免重复/错位
+        UIView *existing = [kw viewWithTag:KS_TOOLBAR_TAG];
+        if (existing && existing.superview != container) [existing removeFromSuperview];
+        Class c = [container class];
+        ksInstallMethods(c);   // 仅 addMethod，不替换任何系统方法，安全
+        ksBuildToolbarIn(container, NO, container);  // 始终底部对齐，位置统一
     } @catch (NSException *e) {}
+}
+
+// 键盘出现 / 设置变更时调用；第三方键盘宿主可能延迟加入层级，多重试兜底
+static void ksOnKeyboardShow(void) {
+    ksEnsureToolbar();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ @try { ksEnsureToolbar(); } @catch (NSException *e) {} });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ @try { ksEnsureToolbar(); } @catch (NSException *e) {} });
 }
 
 static void ksOnKeyboardHide(void) {
-    @try {
-        UIWindow *kw = ksKeyboardWindow();
-        UIView *host = kw ? ksFindRemoteHost(kw) : nil;
-        if (host) { UIView *old = [host viewWithTag:KS_TOOLBAR_TAG]; if (old) [old removeFromSuperview]; }
-    } @catch (NSException *e) {}
+    @try { ksRemoveToolbarInWindow(ksKeyboardWindow()); } @catch (NSException *e) {}
 }
 
 #pragma mark - 注入按钮动作方法（仅 addMethod，不替换系统方法，安全）
@@ -996,21 +997,7 @@ static void ksInstallMethods(Class cls) {
 
 - (void)layoutSubviews {
     %orig;
-    @try {
-        KSSyncPrefs();
-        if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
-            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
-            if (old) [old removeFromSuperview];
-            return;
-        }
-        // 如果键盘窗口里已经有工具栏（通知式挂载已处理），避免重复绘制
-        if (ksToolbarExistsInWindow([self window])) {
-            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
-            if (old) [old removeFromSuperview];
-            return;
-        }
-        ksBuildToolbarIn(self, NO, self);
-    } @catch (NSException *e) {}
+    @try { ksEnsureToolbar(); } @catch (NSException *e) {}
 }
 
 %end
