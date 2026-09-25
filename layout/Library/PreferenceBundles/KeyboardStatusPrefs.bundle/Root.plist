@@ -130,6 +130,18 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.yzdmm.keyboardstatus</string>
+			<key>key</key>
+			<string>showDeleteAll</string>
+			<key>label</key>
+			<string>全删（清空输入框）</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
 			<false/>
 			<key>defaults</key>
 			<string>com.yzdmm.keyboardstatus</string>
@@ -532,6 +544,6 @@
 		</dict>
 	</array>
 	<key>title</key>
-	<string>键盘下方状态 1.2.6</string>
+	<string>键盘下方状态 1.2.10</string>
 </dict>
 </plist>

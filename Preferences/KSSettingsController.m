@@ -1,6 +1,7 @@
 #import <Preferences/Preferences.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
+#include <stdlib.h>
 
 #define KS_SUITE @"com.yzdmm.keyboardstatus"
 // 与 Tweak.xm 里监听的同名 darwin 通知：面板改值 → tweak 实时刷新
@@ -91,8 +92,8 @@ static CGFloat KSFloat(NSString *key, CGFloat def) {
 
 static NSArray *ksDefaultButtonOrder(void) {
     return @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-             @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
-             @"showAI"];
+             @"showPhrases", @"showCursor", @"showDismiss", @"showDeleteAll",
+             @"showQuickAction", @"showAI"];
 }
 
 // 用户自定义顺序（toolbarOrder）与默认顺序合并：非法/缺失项按默认补齐
@@ -118,6 +119,7 @@ static NSDictionary *ksBtnSpecs(void) {
         @"showPhrases":    @[@"text.quote", @"语"],
         @"showCursor":     @[@"arrow.right", @"→"],
         @"showDismiss":    @[@"keyboard.chevron.compact.down", @"收"],
+        @"showDeleteAll":  @[@"trash", @"清"],
         @"showQuickAction":@[@"rectangle.stack", @"切"],
         @"showAI":         @[@"sparkles", @"AI"],
     };
@@ -208,7 +210,8 @@ static NSDictionary *ksBtnSpecs(void) {
             if (!KSBool(k, def)) continue;
             if ([k isEqualToString:@"showAI"] && !KSBool(@"aiEnabled", NO)) continue; // AI 总开关关闭不显示
             if ([k isEqualToString:@"showClipboard"] || [k isEqualToString:@"showDismiss"]
-                || [k isEqualToString:@"showQuickAction"] || [k isEqualToString:@"showAI"]) {
+                || [k isEqualToString:@"showDeleteAll"] || [k isEqualToString:@"showQuickAction"]
+                || [k isEqualToString:@"showAI"]) {
                 KSPREV_SEP();
             }
             NSArray *sf_fb = specs[k];
@@ -252,7 +255,7 @@ static NSDictionary *ksBtnSpecs(void) {
         // 签名含 iconSize + 每个开关独立一位，任何一项变化都触发重建
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4);
         NSString *orderSig = [ksFinalButtonOrder() componentsJoinedByString:@","];
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d%d%d%d%d%d%d%d%d%d%d",
             iconSize, spacing, orderSig,
             KSBool(@"enabled", YES) && KSBool(@"toolbarEnabled", YES) ? 1 : 0,
             KSBool(@"showSelectAll", YES) ? 1 : 0,
@@ -262,6 +265,7 @@ static NSDictionary *ksBtnSpecs(void) {
             KSBool(@"showPhrases", YES) ? 1 : 0,
             KSBool(@"showCursor", YES) ? 1 : 0,
             KSBool(@"showDismiss", YES) ? 1 : 0,
+            KSBool(@"showDeleteAll", YES) ? 1 : 0,
             KSBool(@"showQuickAction", NO) ? 1 : 0,
             (KSBool(@"showAI", NO) && KSBool(@"aiEnabled", NO)) ? 1 : 0];
         if (![sig isEqualToString:_builtSig]) {
@@ -394,6 +398,28 @@ static NSDictionary *ksBtnSpecs(void) {
     } @catch (NSException *e) {}
 }
 
+// 更新后手动重启提示（不再自动注销）
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    @try {
+        NSArray *bases = @[@"/var/jb/Library/KeyboardStatus/.needs_respring",
+                           @"/Library/KeyboardStatus/.needs_respring"];
+        NSString *flag = nil;
+        for (NSString *p in bases)
+            if ([[NSFileManager defaultManager] fileExistsAtPath:p]) { flag = p; break; }
+        if (!flag) return;
+        [[NSFileManager defaultManager] removeItemAtPath:flag error:nil]; // 只提示一次
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"插件已更新"
+                                                                  message:@"键盘下方状态已更新。是否现在重启（注销）使改动完全生效？"
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"稍后重启" style:UIAlertActionStyleCancel handler:nil]];
+        [a addAction:[UIAlertAction actionWithTitle:@"马上重启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x){
+            @try { system("killall -9 SpringBoard"); } @catch (NSException *e) {}
+        }]];
+        [self presentViewController:a animated:YES completion:nil];
+    } @catch (NSException *e) {}
+}
+
 @end
 
 #pragma mark - 子菜单入口 cell（点击 push 子页面；实现放文件尾，因引用其后的子页面类）
@@ -415,7 +441,8 @@ static NSDictionary *ksBtnSpecs(void) {
         _names = @{@"showSelectAll": @"全选", @"showCut": @"剪切", @"showPaste": @"粘贴",
                    @"showClipboard": @"剪贴板历史", @"showPhrases": @"快捷短语",
                    @"showCursor": @"光标左右移", @"showDismiss": @"收起键盘",
-                   @"showQuickAction": @"快捷启动", @"showAI": @"AI 按钮"};
+                   @"showDeleteAll": @"全删", @"showQuickAction": @"快捷启动",
+                   @"showAI": @"AI 按钮"};
         _keys = [ksFinalButtonOrder() mutableCopy];
     }
     return self;

@@ -1,4 +1,6 @@
 #!/bin/bash
-# 安装后注销主界面让设置入口与 tweak 重新加载（rootless 下 kill SpringBoard 即 respring）
-killall -9 SpringBoard 2>/dev/null || true
+# 安装/更新后不再自动注销。写入标志文件，由 tweak/设置面板提示用户手动选择「稍后/马上重启」。
+FLAG=/var/jb/Library/KeyboardStatus/.needs_respring
+mkdir -p "$(dirname "$FLAG")" 2>/dev/null
+touch "$FLAG" 2>/dev/null
 exit 0

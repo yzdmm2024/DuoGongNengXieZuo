@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#include <stdlib.h>
 
 #pragma mark - 配置
 
@@ -369,6 +370,20 @@ static void ksActDismiss(id s, SEL _c) {
     } @catch (NSException *e) {}
 }
 
+// 全删：清空当前输入框的全部文本（先点进输入框再用）
+static void ksActDeleteAll(id s, SEL _c) {
+    @try {
+        UIResponder *fr = ksFindFirstResponder();
+        if (!fr || ![fr conformsToProtocol:@protocol(UITextInput)]) {
+            ksToast(@"请先点进输入框");
+            return;
+        }
+        id<UITextInput> ti = (id<UITextInput>)fr;
+        UITextRange *all = [ti textRangeFromPosition:ti.beginningOfDocument toPosition:ti.endOfDocument];
+        if (all) [ti replaceRange:all withText:@""];
+    } @catch (NSException *e) {}
+}
+
 #pragma mark - AI 按钮（OpenAI 兼容接口：单击默认动作 / 长按菜单）
 
 // 预置模型：0=智谱 GLM-5.3-Flash，1=智谱 GLM-5.3，2=自定义（读 aiBaseURL/aiModel）
@@ -700,38 +715,69 @@ static void ksAILongPress(id s, SEL _c, UILongPressGestureRecognizer *g) {
     } @catch (NSException *e) {}
 }
 
-#pragma mark - Hook：键盘 dock（仅普通 App，不碰主屏幕/设置）
-
-@interface UIKeyboardDockView : UIView
-@end
-
-// 工具栏构建尺寸 / 位置约束，用关联对象挂在 stack 上（每个 dock 实例独立）
+// 工具栏构建尺寸 / 位置约束（挂在 stack 上的关联对象 key）
 static char kKSBuiltSizeKey;
 static char kKSCXKey;
 static char kKSBtmKey;
 
-%hook UIKeyboardDockView
+#pragma mark - 全删按钮：用户提供的垃圾桶图标，缺失时退回 SF Symbol（绝不留空）
 
-- (void)layoutSubviews {
-    %orig;
+static UIImage *ksDeleteAllRawIcon(void) {
     @try {
-        KSSyncPrefs();  // 拿到设置里最新值（滑块改完，收起再拉起键盘即生效）
-
-        if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
-            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
-            if (old) [old removeFromSuperview];
-            return;
+        NSArray *bases = @[@"/var/jb/Library/KeyboardStatus", @"/Library/KeyboardStatus"];
+        for (NSString *b in bases) {
+            NSString *p = [b stringByAppendingPathComponent:@"deleteall.png"];
+            UIImage *img = [UIImage imageWithContentsOfFile:p];
+            if (img) return img;
         }
+    } @catch (NSException *e) {}
+    return nil;
+}
 
+static UIImage *ksScaleImage(UIImage *img, CGFloat s) {
+    if (!img) return nil;
+    @try {
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(s, s), NO, 0);
+        [img drawInRect:CGRectMake(0, 0, s, s)];
+        UIImage *r = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        return r;
+    } @catch (NSException *e) { return nil; }
+}
+
+static UIButton *ksMakeDeleteAllButton(id target, CGFloat iconSize) {
+    @try {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        UIImage *img = ksScaleImage(ksDeleteAllRawIcon(), iconSize);
+        if (img) [b setImage:img forState:UIControlStateNormal];
+        else {
+            UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:iconSize
+                                                                                            weight:UIImageSymbolWeightRegular];
+            UIImage *sf = [UIImage systemImageNamed:@"trash" withConfiguration:cfg];
+            if (sf) [b setImage:sf forState:UIControlStateNormal];
+            else [b setTitle:@"清" forState:UIControlStateNormal];
+        }
+        [b setTintColor:[UIColor labelColor]];
+        b.contentEdgeInsets = UIEdgeInsetsMake(3, 5, 3, 5);
+        [b addTarget:target action:@selector(ksActDeleteAll) forControlEvents:UIControlEventTouchUpInside];
+        return b;
+    } @catch (NSException *e) { return nil; }
+}
+
+#pragma mark - 共享工具栏构建（dock 与第三方键盘宿主容器共用，保证行为一致）
+
+// 在 container 里构建/更新工具栏。atTop=NO 贴底往上抬（系统键盘 dock）；
+// atTop=YES 贴顶往下让（第三方键盘占满底部，只能放键盘上方）
+static void ksBuildToolbarIn(UIView *container, BOOL atTop, id target) {
+    @try {
+        if (!container) return;
         CGFloat iconSize = KSFloat(@"iconSize", 15);
-        CGFloat offX     = KSFloat(@"toolbarX", -25);   // centerX 偏移（负=往左）
-        CGFloat lift     = KSFloat(@"toolbarLift", 35); // 底部抬高量（避开 dock 行与语音键）
-
-        CGFloat spacing = KSFloat(@"toolbarSpacing", 4); // 图标间隔
-        // 自定义顺序（面板「按钮排序」写入 toolbarOrder；非法/缺项按默认补齐）
+        CGFloat offX     = KSFloat(@"toolbarX", -25);
+        CGFloat lift     = KSFloat(@"toolbarLift", 35);
+        CGFloat spacing  = KSFloat(@"toolbarSpacing", 4);
         NSArray *defOrder = @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-                              @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
-                              @"showAI"];
+                              @"showPhrases", @"showCursor", @"showDismiss", @"showDeleteAll",
+                              @"showQuickAction", @"showAI"];
         NSMutableArray *finalOrder = [NSMutableArray array];
         id savedOrder = KSCopyPref(@"toolbarOrder");
         if ([savedOrder isKindOfClass:[NSArray class]]) {
@@ -740,19 +786,18 @@ static char kKSBtmKey;
         }
         for (NSString *k in defOrder)
             if (![finalOrder containsObject:k]) [finalOrder addObject:k];
-        // 重建签名：图标大小 + 图标间隔 + 顺序 + 全部功能开关，任一变化都重建整个工具栏
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
             iconSize, spacing, [finalOrder componentsJoinedByString:@","],
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
-            KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO), KSBool(@"showAI", NO)];
-        UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
+            KSBool(@"showDismiss", YES), KSBool(@"showDeleteAll", YES), KSBool(@"showQuickAction", NO),
+            KSBool(@"showAI", NO), atTop ? 1 : 0];
+        UIStackView *stack = (UIStackView *)[container viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
         if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
             [stack removeFromSuperview];
             stack = nil;
         }
-
         if (!stack) {
             stack = [[UIStackView alloc] init];
             stack.tag = KS_TOOLBAR_TAG;
@@ -761,58 +806,223 @@ static char kKSBtmKey;
             stack.alignment = UIStackViewAlignmentCenter;
             stack.spacing = spacing;
             stack.translatesAutoresizingMaskIntoConstraints = NO;
-            [self addSubview:stack];
-
+            [container addSubview:stack];
             UIButton *b;
             for (NSString *k in finalOrder) {
                 if ([k isEqualToString:@"showSelectAll"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"selection.pin.in.out", @"全", @selector(ksActSelectAll), target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showCut"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"scissors", @"剪", @selector(ksActCut), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"scissors", @"剪", @selector(ksActCut), target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showPaste"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"doc.on.clipboard", @"粘", @selector(ksActPaste), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"doc.on.clipboard", @"粘", @selector(ksActPaste), target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showClipboard"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"list.clipboard", @"历", @selector(ksActClipboard), target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showPhrases"] && KSBool(k, YES)) {
-                    b = ksMakeButton(@"text.quote", @"语", @selector(ksActPhrases), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"text.quote", @"语", @selector(ksActPhrases), target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showCursor"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  self, iconSize); if (b) [stack addArrangedSubview:b];
-                    b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"arrow.left",  @"←", @selector(ksActCursorLeft),  target, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"arrow.right", @"→", @selector(ksActCursorRight), target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showDismiss"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), target, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showDeleteAll"] && KSBool(k, YES)) {
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeDeleteAllButton(target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showQuickAction"] && KSBool(k, NO)) {
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b];
+                    b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), target, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showAI"] && KSBool(k, NO) && KSBool(@"aiEnabled", NO)) {
-                    // AI 按钮：单击默认动作，长按弹功能菜单；总开关 aiEnabled 关闭时整个隐藏
                     [stack addArrangedSubview:ksSeparator()];
-                    b = ksMakeButton(@"sparkles", @"AI", @selector(ksActAI:), self, iconSize);
+                    b = ksMakeButton(@"sparkles", @"AI", @selector(ksActAI:), target, iconSize);
                     if (b) {
-                        UILongPressGestureRecognizer *lp =
-                            [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(ksAILongPress:)];
+                        UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:target action:@selector(ksAILongPress:)];
                         lp.minimumPressDuration = 0.4;
                         [b addGestureRecognizer:lp];
                         [stack addArrangedSubview:b];
                     }
                 }
             }
-
-            NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:self.centerXAnchor constant:offX];
-            NSLayoutConstraint *btm = [stack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-lift];
-            cx.active = YES; btm.active = YES;
+            NSLayoutConstraint *cx  = [stack.centerXAnchor constraintEqualToAnchor:container.centerXAnchor constant:offX];
+            NSLayoutConstraint *pos = atTop
+                ? [stack.topAnchor constraintEqualToAnchor:container.topAnchor constant:lift]
+                : [stack.bottomAnchor constraintEqualToAnchor:container.bottomAnchor constant:-lift];
+            cx.active = YES; pos.active = YES;
             objc_setAssociatedObject(stack, &kKSBuiltSizeKey, sig, OBJC_ASSOCIATION_RETAIN);
             objc_setAssociatedObject(stack, &kKSCXKey,  cx,  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            objc_setAssociatedObject(stack, &kKSBtmKey, btm, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(stack, &kKSBtmKey, pos, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         } else {
-            // 已存在：只更新位置参数（实时跟随面板调整）
             NSLayoutConstraint *cx  = objc_getAssociatedObject(stack, &kKSCXKey);
-            NSLayoutConstraint *btm = objc_getAssociatedObject(stack, &kKSBtmKey);
+            NSLayoutConstraint *pos = objc_getAssociatedObject(stack, &kKSBtmKey);
             cx.constant  = offX;
-            btm.constant = -lift;
+            pos.constant = atTop ? lift : -lift;
         }
+    } @catch (NSException *e) {}
+}
+
+#pragma mark - 第三方键盘（微信输入法等）支持：通知式挂载，不 swizzle 通用容器类
+
+static BOOL ksIsRemoteKeyboardView(UIView *v) {
+    @try {
+        NSString *cn = NSStringFromClass([v class]);
+        return ([cn rangeOfString:@"Remote"].length > 0 && [cn rangeOfString:@"Keyboard"].length > 0);
+    } @catch (NSException *e) { return NO; }
+}
+
+static BOOL ksViewContainsRemote(UIView *v) {
+    @try {
+        UIView *cur = v;
+        while (cur) {
+            for (UIView *s in cur.subviews)
+                if (ksIsRemoteKeyboardView(s)) return YES;
+            cur = cur.superview;
+        }
+    } @catch (NSException *e) {}
+    return NO;
+}
+
+static UIView *ksFindRemoteHost(UIView *root) {
+    if (!root) return nil;
+    @try {
+        NSMutableArray *q = [NSMutableArray arrayWithObject:root];
+        while (q.count) {
+            UIView *v = q.firstObject; [q removeObjectAtIndex:0];
+            if ([NSStringFromClass([v class]) isEqualToString:@"UIInputSetHostView"]) {
+                for (UIView *s in v.subviews)
+                    if (ksIsRemoteKeyboardView(s)) return v;
+            }
+            for (UIView *s in v.subviews) [q addObject:s];
+        }
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+static UIWindow *ksKeyboardWindow(void) {
+    @try {
+        UIApplication *app = [UIApplication sharedApplication];
+        NSMutableArray *wins = [NSMutableArray array];
+        if (@available(iOS 13.0, *)) {
+            for (UIScene *s in app.connectedScenes)
+                if ([s isKindOfClass:[UIWindowScene class]])
+                    [wins addObjectsFromArray:((UIWindowScene *)s).windows];
+        }
+        if (wins.count == 0) [wins addObjectsFromArray:app.windows];
+        for (UIWindow *w in wins) {
+            if ([NSStringFromClass([w class]) isEqualToString:@"UITextEffectsWindow"]) return w;
+        }
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+static void ksOnKeyboardShow(void) {
+    @try {
+        if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) return;
+        UIWindow *kw = ksKeyboardWindow();
+        if (!kw) return;
+        UIView *host = ksFindRemoteHost(kw);
+        if (!host) return;
+        Class hc = NSClassFromString(@"UIInputSetHostView");
+        if (hc) ksInstallMethods(hc);   // 仅 addMethod，不替换任何系统方法
+        ksBuildToolbarIn(host, YES, host);
+    } @catch (NSException *e) {}
+}
+
+static void ksOnKeyboardHide(void) {
+    @try {
+        UIWindow *kw = ksKeyboardWindow();
+        UIView *host = kw ? ksFindRemoteHost(kw) : nil;
+        if (host) { UIView *old = [host viewWithTag:KS_TOOLBAR_TAG]; if (old) [old removeFromSuperview]; }
+    } @catch (NSException *e) {}
+}
+
+#pragma mark - 更新后手动重启提示（不再自动注销）
+
+static NSString *ksRestartFlagPath(void) {
+    NSArray *bases = @[@"/var/jb/Library/KeyboardStatus/.needs_respring",
+                       @"/Library/KeyboardStatus/.needs_respring"];
+    for (NSString *p in bases)
+        if ([[NSFileManager defaultManager] fileExistsAtPath:p]) return p;
+    return nil;
+}
+
+static void ksMaybePromptRestart(void) {
+    @try {
+        NSString *flag = ksRestartFlagPath();
+        if (!flag) return;
+        [[NSFileManager defaultManager] removeItemAtPath:flag error:nil]; // 只提示一次
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            @try {
+                UIViewController *vc = ksTopViewController();
+                if (!vc) return;
+                UIAlertController *a = [UIAlertController alertControllerWithTitle:@"插件已更新"
+                                                                          message:@"键盘下方状态已更新。是否现在重启（注销）使改动完全生效？"
+                                                                   preferredStyle:UIAlertControllerStyleAlert];
+                [a addAction:[UIAlertAction actionWithTitle:@"稍后重启" style:UIAlertActionStyleCancel handler:nil]];
+                [a addAction:[UIAlertAction actionWithTitle:@"马上重启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x){
+                    @try { system("killall -9 SpringBoard"); } @catch (NSException *e) {}
+                }]];
+                [vc presentViewController:a animated:YES completion:nil];
+            } @catch (NSException *e) {}
+        });
+    } @catch (NSException *e) {}
+}
+
+#pragma mark - 注入按钮动作方法（仅 addMethod，不替换系统方法，安全）
+
+static void ksInstallMethods(Class cls) {
+    if (!cls) return;
+    static NSMutableSet *done;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ done = [NSMutableSet set]; });
+    NSString *cname = NSStringFromClass(cls);
+    if (cname.length == 0 || [done containsObject:cname]) return;
+    [done addObject:cname];
+    struct { const char *name; IMP imp; const char *types; } methods[] = {
+        {"ksActSelectAll",   (IMP)ksActSelectAll,   "v@:"},
+        {"ksActCut",         (IMP)ksActCut,         "v@:"},
+        {"ksActPaste",       (IMP)ksActPaste,       "v@:"},
+        {"ksActCursorLeft",  (IMP)ksActCursorLeft,  "v@:"},
+        {"ksActCursorRight", (IMP)ksActCursorRight, "v@:"},
+        {"ksActClipboard",   (IMP)ksActClipboard,   "v@:"},
+        {"ksActPhrases",     (IMP)ksActPhrases,     "v@:"},
+        {"ksActDismiss",     (IMP)ksActDismiss,     "v@:"},
+        {"ksActDeleteAll",   (IMP)ksActDeleteAll,   "v@:"},
+        {"ksActQuickLaunch", (IMP)ksActQuickLaunch, "v@:"},
+        {"ksActAI:",         (IMP)ksActAI,          "v@:@"},
+        {"ksAILongPress:",   (IMP)ksAILongPress,    "v@:@"},
+    };
+    for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
+        SEL sel = sel_registerName(methods[i].name);
+        if (!class_addMethod(cls, sel, methods[i].imp, methods[i].types))
+            class_replaceMethod(cls, sel, methods[i].imp, methods[i].types);
+    }
+}
+
+#pragma mark - Hook：键盘 dock（仅普通 App，不碰主屏幕/设置）
+
+@interface UIKeyboardDockView : UIView
+@end
+
+%hook UIKeyboardDockView
+
+- (void)layoutSubviews {
+    %orig;
+    @try {
+        KSSyncPrefs();
+        if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
+            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
+            if (old) [old removeFromSuperview];
+            return;
+        }
+        // 第三方键盘（无 dock）由通知式挂载处理，这里跳过避免重复
+        if (ksViewContainsRemote(self)) {
+            UIView *old = [self viewWithTag:KS_TOOLBAR_TAG];
+            if (old) [old removeFromSuperview];
+            return;
+        }
+        ksBuildToolbarIn(self, NO, self);
     } @catch (NSException *e) {}
 }
 
@@ -841,6 +1051,7 @@ static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
             }
             if (wins.count == 0) [wins addObjectsFromArray:app.windows];
             for (UIWindow *w in wins) ksRefreshLayouts(w);
+            ksOnKeyboardShow();   // 第三方键盘宿主工具栏也实时跟随设置
         } @catch (NSException *e) {}
     });
 }
@@ -849,29 +1060,34 @@ static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
 
 %ctor {
     @autoreleasepool {
-        Class cls = NSClassFromString(@"UIKeyboardDockView");
-        if (!cls) return;
-        // 监听设置面板的实时广播（面板每次改开关/滑块都 post 一次）
+        // 安全阀：系统关键进程不加载任何 hook/监听，杜绝设备级 respring 循环
+        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        if (bid.length == 0) return;
+        NSArray *blocked = @[@"com.apple.springboard", @"com.apple.Preferences",
+                             @"com.apple.WebKit", @"com.apple.backboardd",
+                             @"com.apple.ReportCrash", @"com.apple.cfprefsd",
+                             @"com.apple.mediaserverd", @"com.apple.dt."];
+        for (NSString *bad in blocked) if ([bid hasPrefix:bad]) return;
+
+        // 监听设置面板的实时广播
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         ksPrefsChangedCB, CFSTR(KS_DARWIN_NOTI), NULL,
                                         CFNotificationSuspensionBehaviorDeliverImmediately);
-        struct { const char *name; IMP imp; const char *types; } methods[] = {
-            {"ksActSelectAll",  (IMP)ksActSelectAll, "v@:"},
-            {"ksActCut",        (IMP)ksActCut, "v@:"},
-            {"ksActPaste",      (IMP)ksActPaste, "v@:"},
-            {"ksActCursorLeft", (IMP)ksActCursorLeft, "v@:"},
-            {"ksActCursorRight",(IMP)ksActCursorRight, "v@:"},
-            {"ksActClipboard",  (IMP)ksActClipboard, "v@:"},
-            {"ksActPhrases",    (IMP)ksActPhrases, "v@:"},
-            {"ksActDismiss",    (IMP)ksActDismiss, "v@:"},
-            {"ksActQuickLaunch",(IMP)ksActQuickLaunch, "v@:"},
-            {"ksActAI:",        (IMP)ksActAI, "v@:@"},          // 带 sender（loading/取消）
-            {"ksAILongPress:",  (IMP)ksAILongPress, "v@:@"},    // 长按手势
-        };
-        for (size_t i = 0; i < sizeof(methods)/sizeof(methods[0]); i++) {
-            SEL sel = sel_registerName(methods[i].name);
-            if (!class_addMethod(cls, sel, methods[i].imp, methods[i].types))
-                class_replaceMethod(cls, sel, methods[i].imp, methods[i].types);
+        // 第三方键盘（微信输入法等）无 dock → 键盘显示通知时挂载到宿主容器。
+        // 注意：这里只注册通知 + addSubview，不 swizzle UIInputSetHostView 等通用容器类。
+        static id ksKbObs1, ksKbObs2;
+        ksKbObs1 = [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardDidShowNotification
+                                                                     object:nil queue:[NSOperationQueue mainQueue]
+                                                                 usingBlock:^(NSNotification *n){ ksOnKeyboardShow(); }];
+        ksKbObs2 = [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillHideNotification
+                                                                     object:nil queue:[NSOperationQueue mainQueue]
+                                                                 usingBlock:^(NSNotification *n){ ksOnKeyboardHide(); }];
+        // 注入按钮动作方法（仅 addMethod，安全）
+        for (NSString *n in @[@"UIKeyboardDockView", @"UIInputSetHostView"]) {
+            Class c = NSClassFromString(n);
+            if (c) ksInstallMethods(c);
         }
+        // 更新后不再自动注销：有标志才提示用户手动选择
+        ksMaybePromptRestart();
     }
 }
