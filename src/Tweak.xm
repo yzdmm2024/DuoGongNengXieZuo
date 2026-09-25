@@ -8,6 +8,9 @@ static NSInteger const KS_TOOLBAR_TAG = 9174;
 // 设置面板改值后广播的 darwin 通知（KSSettingsController/KSPreviewCell 里同名 post）
 #define KS_DARWIN_NOTI "com.yzdmm.keyboardstatus.prefschanged"
 
+// 前向声明：ksToast 定义见文件后部，供文件靠前的方法（如 ksActDeleteAll）提前调用
+static void ksToast(NSString *msg);
+
 #pragma mark - 偏好（跨进程：设置面板与 tweak 共用 KS_SUITE）
 
 // Roothide 实测（2026-09-06 frida）：面板写入的偏好经 RootHide 重定向，落在
