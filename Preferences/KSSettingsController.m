@@ -6,35 +6,62 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// 手动重启（system() 在 iOS 不可用）：用 posix_spawn 调 killall 杀 SpringBoard 触发注销
-// 优先绝对路径直接调 killall（不依赖 PATH），找不到再回退 sh -c
+// 标记「马上重启」：设置面板可能没权限直接杀 SpringBoard，写标志让 tweak 在下次键盘出现时注销
+static void ksMarkRespringNow(void) {
+    @try {
+        NSString *dir = @"/var/jb/Library/KeyboardStatus";
+        NSString *flag = [dir stringByAppendingPathComponent:@".do_respring"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:nil];
+        [@"" writeToFile:flag atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    } @catch (NSException *e) {}
+}
+
+// 手动重启（system() 在 iOS 不可用）：优先 sbreload，兜底 killall，再兜底 sh -c
 static void ksRespring(void) {
     @try {
-        static const char *k[] = {
-            "/usr/bin/killall", "/bin/killall",
-            "/var/jb/usr/bin/killall", "/var/jb/bin/killall",
-            "/sbin/killall", NULL
+        // 1) sbreload：越狱专用安全注销，多数 rootless 环境可用
+        static const char *sbreload_paths[] = {
+            "/var/jb/usr/bin/sbreload", "/usr/bin/sbreload",
+            "/var/jb/bin/sbreload", "/bin/sbreload", NULL
         };
-        const char *bin = NULL;
+        for (int i = 0; sbreload_paths[i]; i++) {
+            if (access(sbreload_paths[i], X_OK) == 0) {
+                pid_t pid;
+                char *argv[] = {(char *)"sbreload", NULL};
+                if (posix_spawn(&pid, sbreload_paths[i], NULL, NULL, argv, NULL) == 0) {
+                    waitpid(pid, NULL, 0);
+                    return;
+                }
+            }
+        }
+        // 2) 兜底 killall
+        static const char *k[] = {
+            "/var/jb/usr/bin/killall", "/var/jb/bin/killall",
+            "/usr/bin/killall", "/bin/killall", "/sbin/killall", NULL
+        };
         for (int i = 0; k[i]; i++) {
-            if (access(k[i], X_OK) == 0) { bin = k[i]; break; }
+            if (access(k[i], X_OK) == 0) {
+                pid_t pid;
+                char *argv[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
+                if (posix_spawn(&pid, k[i], NULL, NULL, argv, NULL) == 0) {
+                    waitpid(pid, NULL, 0);
+                    return;
+                }
+            }
         }
-        if (bin) {
-            pid_t pid;
-            char *argv[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
-            posix_spawn(&pid, bin, NULL, NULL, argv, NULL);
-            waitpid(pid, NULL, 0);
-            return;
-        }
-        // 回退：sh -c（依赖 PATH 找 killall）
-        static const char *shc[] = {"/bin/sh", "/var/jb/bin/sh", "/usr/bin/sh", NULL};
+        // 3) 再兜底 sh -c
+        static const char *shc[] = {"/var/jb/bin/sh", "/bin/sh", "/usr/bin/sh", NULL};
         for (int i = 0; shc[i]; i++) {
             if (access(shc[i], X_OK) == 0) {
                 pid_t pid;
                 char *argv[] = {(char *)"sh", (char *)"-c", (char *)"killall -9 SpringBoard", NULL};
-                posix_spawn(&pid, shc[i], NULL, NULL, argv, NULL);
-                waitpid(pid, NULL, 0);
-                return;
+                if (posix_spawn(&pid, shc[i], NULL, NULL, argv, NULL) == 0) {
+                    waitpid(pid, NULL, 0);
+                    return;
+                }
             }
         }
     } @catch (NSException *e) {}
@@ -439,19 +466,27 @@ static NSDictionary *ksBtnSpecs(void) {
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     @try {
-        NSArray *bases = @[@"/var/jb/Library/KeyboardStatus/.needs_respring",
-                           @"/Library/KeyboardStatus/.needs_respring"];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray *need = @[@"/var/jb/Library/KeyboardStatus/.needs_respring",
+                          @"/Library/KeyboardStatus/.needs_respring"];
+        NSArray *doNow = @[@"/var/jb/Library/KeyboardStatus/.do_respring",
+                            @"/Library/KeyboardStatus/.do_respring"];
         NSString *flag = nil;
-        for (NSString *p in bases)
-            if ([[NSFileManager defaultManager] fileExistsAtPath:p]) { flag = p; break; }
+        for (NSString *p in need)
+            if ([fm fileExistsAtPath:p]) { flag = p; break; }
+        // 清理旧的「马上重启」残留标志（上次点了但没成功注销）
+        for (NSString *p in doNow) [fm removeItemAtPath:p error:nil];
         if (!flag) return;
-        [[NSFileManager defaultManager] removeItemAtPath:flag error:nil]; // 只提示一次
+        [fm removeItemAtPath:flag error:nil]; // 先删，避免反复弹窗；删失败说明 postinst 权限还有问题
         UIAlertController *a = [UIAlertController alertControllerWithTitle:@"插件已更新"
                                                                   message:@"键盘下方状态已更新。是否现在重启（注销）使改动完全生效？"
                                                            preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:@"稍后重启" style:UIAlertActionStyleCancel handler:nil]];
         [a addAction:[UIAlertAction actionWithTitle:@"马上重启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x){
-            @try { ksRespring(); } @catch (NSException *e) {}
+            @try {
+                ksMarkRespringNow();   // 万一设置面板直接杀 SpringBoard 没权限，让 tweak 兜底
+                ksRespring();          // 优先直接注销
+            } @catch (NSException *e) {}
         }]];
         [self presentViewController:a animated:YES completion:nil];
     } @catch (NSException *e) {}

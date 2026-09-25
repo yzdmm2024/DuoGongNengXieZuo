@@ -1,6 +1,9 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import "deleteall_icon.h"
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 // 前向声明：新增函数在 %ctor / 早定义处被提前引用
 static void ksToast(NSString *msg);
@@ -922,9 +925,74 @@ static void ksRemoveToolbarInWindow(UIWindow *w) {
     } @catch (NSException *e) {}
 }
 
+// 处理设置面板「马上重启」标志：设置进程可能没权限直接杀 SpringBoard，由 tweak 兜底注销
+static void ksRespring(void) {
+    @try {
+        // 优先 sbreload（越狱专用安全注销）
+        static const char *sbreload_paths[] = {
+            "/var/jb/usr/bin/sbreload", "/usr/bin/sbreload",
+            "/var/jb/bin/sbreload", "/bin/sbreload", NULL
+        };
+        for (int i = 0; sbreload_paths[i]; i++) {
+            if (access(sbreload_paths[i], X_OK) == 0) {
+                pid_t pid;
+                char *argv[] = {(char *)"sbreload", NULL};
+                if (posix_spawn(&pid, sbreload_paths[i], NULL, NULL, argv, NULL) == 0) {
+                    waitpid(pid, NULL, 0);
+                    return;
+                }
+            }
+        }
+        // 兜底 killall
+        static const char *k[] = {
+            "/var/jb/usr/bin/killall", "/var/jb/bin/killall",
+            "/usr/bin/killall", "/bin/killall", "/sbin/killall", NULL
+        };
+        for (int i = 0; k[i]; i++) {
+            if (access(k[i], X_OK) == 0) {
+                pid_t pid;
+                char *argv[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
+                if (posix_spawn(&pid, k[i], NULL, NULL, argv, NULL) == 0) {
+                    waitpid(pid, NULL, 0);
+                    return;
+                }
+            }
+        }
+        // 再兜底 sh -c
+        static const char *shc[] = {"/var/jb/bin/sh", "/bin/sh", "/usr/bin/sh", NULL};
+        for (int i = 0; shc[i]; i++) {
+            if (access(shc[i], X_OK) == 0) {
+                pid_t pid;
+                char *argv[] = {(char *)"sh", (char *)"-c", (char *)"killall -9 SpringBoard", NULL};
+                if (posix_spawn(&pid, shc[i], NULL, NULL, argv, NULL) == 0) {
+                    waitpid(pid, NULL, 0);
+                    return;
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+}
+
+static void ksCheckRespringFlag(void) {
+    @try {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray *flags = @[@"/var/jb/Library/KeyboardStatus/.do_respring",
+                           @"/Library/KeyboardStatus/.do_respring"];
+        for (NSString *p in flags) {
+            if ([fm fileExistsAtPath:p]) {
+                [fm removeItemAtPath:p error:nil];
+                ksRespring();
+                return;
+            }
+        }
+    } @catch (NSException *e) {}
+}
+
 // 统一入口：保证键盘窗口里只有一条工具栏，且始终锚定在底部（位置统一）
 static void ksEnsureToolbar(void) {
     @try {
+        // 设置面板点的「马上重启」可能没权限直接注销，tweak 在这里兜底
+        ksCheckRespringFlag();
         if (!KSBool(@"enabled", YES) || !KSBool(@"toolbarEnabled", YES)) {
             ksRemoveToolbarInWindow(ksKeyboardWindow());
             return;
