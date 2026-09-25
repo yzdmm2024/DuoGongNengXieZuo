@@ -317,6 +317,19 @@ static void ksActCut(id s, SEL _c) {
 static void ksActPaste(id s, SEL _c) {
     @try { [[UIApplication sharedApplication] sendAction:@selector(paste:) to:nil from:nil forEvent:nil]; } @catch (NSException *e) {}
 }
+// 全删：清空当前输入框全部文本
+static void ksActDeleteAll(id s, SEL _c) {
+    @try {
+        UIResponder *fr = ksFindFirstResponder();
+        if (!fr || ![fr conformsToProtocol:@protocol(UITextInput)]) {
+            ksToast(@"请先点进输入框");
+            return;
+        }
+        id<UITextInput> ti = (id<UITextInput>)fr;
+        UITextRange *all = [ti textRangeFromPosition:ti.beginningOfDocument toPosition:ti.endOfDocument];
+        if (all) [ti replaceRange:all withText:@""];
+    } @catch (NSException *e) {}
+}
 static void ksActCursorLeft(id s, SEL _c) {
     @try {
         UIResponder *fr = ksFindFirstResponder();
@@ -730,8 +743,8 @@ static char kKSBtmKey;
         CGFloat spacing = KSFloat(@"toolbarSpacing", 4); // 图标间隔
         // 自定义顺序（面板「按钮排序」写入 toolbarOrder；非法/缺项按默认补齐）
         NSArray *defOrder = @[@"showSelectAll", @"showCut", @"showPaste", @"showClipboard",
-                              @"showPhrases", @"showCursor", @"showDismiss", @"showQuickAction",
-                              @"showAI"];
+                              @"showPhrases", @"showCursor", @"showDismiss", @"showDeleteAll",
+                              @"showQuickAction", @"showAI"];
         NSMutableArray *finalOrder = [NSMutableArray array];
         id savedOrder = KSCopyPref(@"toolbarOrder");
         if ([savedOrder isKindOfClass:[NSArray class]]) {
@@ -741,11 +754,11 @@ static char kKSBtmKey;
         for (NSString *k in defOrder)
             if (![finalOrder containsObject:k]) [finalOrder addObject:k];
         // 重建签名：图标大小 + 图标间隔 + 顺序 + 全部功能开关，任一变化都重建整个工具栏
-        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+        NSString *sig = [NSString stringWithFormat:@"%.1f|%.0f|%@|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
             iconSize, spacing, [finalOrder componentsJoinedByString:@","],
             KSBool(@"showSelectAll", YES), KSBool(@"showCut", YES), KSBool(@"showPaste", YES),
             KSBool(@"showClipboard", YES), KSBool(@"showPhrases", YES), KSBool(@"showCursor", YES),
-            KSBool(@"showDismiss", YES), KSBool(@"showQuickAction", NO), KSBool(@"showAI", NO)];
+            KSBool(@"showDismiss", YES), KSBool(@"showDeleteAll", YES), KSBool(@"showQuickAction", NO), KSBool(@"showAI", NO)];
         UIStackView *stack = (UIStackView *)[self viewWithTag:KS_TOOLBAR_TAG];
         NSString *built = objc_getAssociatedObject(stack, &kKSBuiltSizeKey);
         if (stack && (![built isKindOfClass:[NSString class]] || ![built isEqualToString:sig])) {
@@ -783,6 +796,9 @@ static char kKSBtmKey;
                 } else if ([k isEqualToString:@"showDismiss"] && KSBool(k, YES)) {
                     [stack addArrangedSubview:ksSeparator()];
                     b = ksMakeButton(@"keyboard.chevron.compact.down", @"收", @selector(ksActDismiss), self, iconSize); if (b) [stack addArrangedSubview:b];
+                } else if ([k isEqualToString:@"showDeleteAll"] && KSBool(k, YES)) {
+                    [stack addArrangedSubview:ksSeparator()];
+                    b = ksMakeButton(@"trash", @"清", @selector(ksActDeleteAll), self, iconSize); if (b) [stack addArrangedSubview:b];
                 } else if ([k isEqualToString:@"showQuickAction"] && KSBool(k, NO)) {
                     [stack addArrangedSubview:ksSeparator()];
                     b = ksMakeButton(@"rectangle.stack", @"切", @selector(ksActQuickLaunch), self, iconSize); if (b) [stack addArrangedSubview:b];
@@ -864,6 +880,7 @@ static void ksPrefsChangedCB(CFNotificationCenterRef center, void *observer,
             {"ksActClipboard",  (IMP)ksActClipboard, "v@:"},
             {"ksActPhrases",    (IMP)ksActPhrases, "v@:"},
             {"ksActDismiss",    (IMP)ksActDismiss, "v@:"},
+            {"ksActDeleteAll",  (IMP)ksActDeleteAll, "v@:"},
             {"ksActQuickLaunch",(IMP)ksActQuickLaunch, "v@:"},
             {"ksActAI:",        (IMP)ksActAI, "v@:@"},          // 带 sender（loading/取消）
             {"ksAILongPress:",  (IMP)ksAILongPress, "v@:@"},    // 长按手势
