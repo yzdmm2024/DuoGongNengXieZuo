@@ -1,6 +1,47 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #include <stdlib.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+// 手动重启（system() 在 iOS 不可用）：用 posix_spawn 调 killall 杀 SpringBoard 触发注销
+// 优先绝对路径直接调 killall（不依赖 PATH），找不到再回退 sh -c
+static void ksRespring(void) {
+    @try {
+        static const char *k[] = {
+            "/usr/bin/killall", "/bin/killall",
+            "/var/jb/usr/bin/killall", "/var/jb/bin/killall",
+            "/sbin/killall", NULL
+        };
+        const char *bin = NULL;
+        for (int i = 0; k[i]; i++) {
+            if (access(k[i], X_OK) == 0) { bin = k[i]; break; }
+        }
+        if (bin) {
+            pid_t pid;
+            char *argv[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
+            posix_spawn(&pid, bin, NULL, NULL, argv, NULL);
+            waitpid(pid, NULL, 0);
+            return;
+        }
+        // 回退：sh -c（依赖 PATH 找 killall）
+        static const char *shc[] = {"/bin/sh", "/var/jb/bin/sh", "/usr/bin/sh", NULL};
+        for (int i = 0; shc[i]; i++) {
+            if (access(shc[i], X_OK) == 0) {
+                pid_t pid;
+                char *argv[] = {(char *)"sh", (char *)"-c", (char *)"killall -9 SpringBoard", NULL};
+                posix_spawn(&pid, shc[i], NULL, NULL, argv, NULL);
+                waitpid(pid, NULL, 0);
+                return;
+            }
+        }
+    } @catch (NSException *e) {}
+}
+
+// 前向声明：新增函数在 %ctor / 早定义处被提前引用
+static void ksToast(NSString *msg);
+static void ksInstallMethods(Class cls);
 
 #pragma mark - 配置
 
@@ -961,7 +1002,7 @@ static void ksMaybePromptRestart(void) {
                                                                    preferredStyle:UIAlertControllerStyleAlert];
                 [a addAction:[UIAlertAction actionWithTitle:@"稍后重启" style:UIAlertActionStyleCancel handler:nil]];
                 [a addAction:[UIAlertAction actionWithTitle:@"马上重启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x){
-                    @try { system("killall -9 SpringBoard"); } @catch (NSException *e) {}
+                    @try { ksRespring(); } @catch (NSException *e) {}
                 }]];
                 [vc presentViewController:a animated:YES completion:nil];
             } @catch (NSException *e) {}
